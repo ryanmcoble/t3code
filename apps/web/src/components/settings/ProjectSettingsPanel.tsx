@@ -1,3 +1,4 @@
+import { ProjectFolderActions } from "../ProjectFolderActions";
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -563,6 +564,15 @@ function ProjectDetail({
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
         {hasMultipleCheckouts ? checkoutChoices : null}
+        {!representative.repositoryIdentity?.locator.remoteUrl &&
+        environmentById.get(representative.environmentId)?.serverConfig?.environment?.capabilities
+          ?.projectFolderTransfer ? (
+          <SettingsSection title="Folder transfer and sync">
+            <ProjectFolderActions
+              projectRef={scopeProjectRef(representative.environmentId, representative.id)}
+            />
+          </SettingsSection>
+        ) : null}
         <SettingsSection title="Danger">
           <SettingsRow
             title={

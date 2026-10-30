@@ -1,3 +1,4 @@
+import { ProjectFolderActions } from "../projects/ProjectFolderActions";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { SearchField } from "../../components/ui/SearchField";
 import { Button } from "../../components/ui/Button";
@@ -229,6 +230,18 @@ export function NewTaskEnvironmentPickerRouteScreen() {
               />
             ))}
           </PickerSurface>
+          {flow.selectedProject ? (
+            <ProjectFolderActions
+              projectRef={{
+                environmentId: flow.selectedProject.environmentId,
+                projectId: flow.selectedProject.id,
+              }}
+              onCopied={(project) => {
+                flow.setProject(project);
+                navigation.goBack();
+              }}
+            />
+          ) : null}
         </ScrollView>
       </ScreenContent>
     </View>

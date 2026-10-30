@@ -1,3 +1,4 @@
+import { ProjectFolderActions } from "../projects/ProjectFolderActions";
 import {
   getPromptControlledTraits,
   getTraitSelectChange,
@@ -270,6 +271,7 @@ type ThreadSettingsSessionProps = {
   readonly selectedModel: ModelSelection | null;
   readonly prompt: string;
   readonly onPromptChange: (prompt: string) => void;
+  readonly folderActions?: ReactNode;
   readonly reportedModelSelection?: ModelSelection | null;
   readonly onSelectModel: (option: ModelOption) => void;
   readonly restoreSelection?: (selection: ModelSelection) => ModelSelection;
@@ -287,6 +289,7 @@ export type ExistingThreadSettingsRouteParams = {
 };
 
 type ThreadSettingsSessionValue = {
+  readonly folderActions: ReactNode;
   readonly environmentId: EnvironmentId | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
@@ -600,6 +603,7 @@ function ThreadSettingsSessionProvider(
   };
 
   const value = {
+    folderActions: props.folderActions,
     environmentId: props.environmentId,
     providerInstanceId: props.providerInstanceId,
     providerGroups,
@@ -1058,6 +1062,7 @@ function ThreadSettingsMainContent(props: {
           ) : null}
         </>
       }
+      ListFooterComponent={session.folderActions ? <>{session.folderActions}</> : null}
       recycleItems
       refreshControl={
         session.environmentId ? (
@@ -1539,6 +1544,19 @@ export function ExistingThreadSettingsRouteScreen({
     <ThreadSettingsPickerScreen
       environmentId={selectedThread.environmentId}
       projectId={selectedThread.projectId}
+      folderActions={
+        <ProjectFolderActions
+          projectRef={{
+            environmentId: selectedThread.environmentId,
+            projectId: selectedThread.projectId,
+          }}
+          sourceThreadRef={{
+            environmentId: selectedThread.environmentId,
+            threadId: selectedThread.id,
+          }}
+          threadActive={selectedThread.runtime?.activeRunId != null}
+        />
+      }
       providerInstanceId={modelSelection.instanceId}
       {...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {})}
       providerGroups={groupByProvider(modelOptions)}
@@ -1576,6 +1594,17 @@ export function NewTaskThreadSettingsRouteScreen() {
     <ThreadSettingsPickerScreen
       environmentId={flow.selectedEnvironmentId}
       projectId={flow.selectedProject?.id ?? null}
+      folderActions={
+        flow.selectedProject ? (
+          <ProjectFolderActions
+            projectRef={{
+              environmentId: flow.selectedProject.environmentId,
+              projectId: flow.selectedProject.id,
+            }}
+            onCopied={flow.setProject}
+          />
+        ) : null
+      }
       {...(flow.selectedModel ? { providerInstanceId: flow.selectedModel.instanceId } : {})}
       providerGroups={flow.providerGroups}
       selectedModel={flow.selectedModel}

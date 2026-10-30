@@ -1,3 +1,21 @@
+import { ProjectFolderExportEndInput } from "./projectFolder.ts";
+import {
+  ProjectFolderSyncGetInput,
+  ProjectFolderSyncGetResult,
+  ProjectFolderSyncSetInput,
+} from "./projectFolder.ts";
+import {
+  ProjectFolderExportInput,
+  ProjectFolderExportResult,
+  ProjectFolderImportInput,
+  ProjectFolderImportResult,
+  ProjectFolderReadInput,
+  ProjectFolderReadResult,
+  ProjectFolderWriteInput,
+  ProjectFolderSessionInput,
+  ProjectFolderFinishResult,
+  ProjectFolderTransferError,
+} from "./projectFolder.ts";
 import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
@@ -403,6 +421,15 @@ import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
   projectsListIgnoredFiles: "projects.listIgnoredFiles",
+  projectsFolderSyncGet: "projects.folder.sync.get",
+  projectsFolderSyncSet: "projects.folder.sync.set",
+  projectsFolderExportEnd: "projects.folder.export.end",
+  projectsFolderExport: "projects.folder.export",
+  projectsFolderImport: "projects.folder.import",
+  projectsFolderRead: "projects.folder.read",
+  projectsFolderWrite: "projects.folder.write",
+  projectsFolderFinish: "projects.folder.finish",
+  projectsFolderCancel: "projects.folder.cancel",
   projectsReadFile: "projects.readFile",
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
@@ -1292,6 +1319,57 @@ const WsProjectsListIgnoredFilesRpc = Rpc.make(WS_METHODS.projectsListIgnoredFil
   error: Schema.Union([ProjectListEntriesError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsFolderSyncGetRpc = Rpc.make(WS_METHODS.projectsFolderSyncGet, {
+  payload: ProjectFolderSyncGetInput,
+  success: ProjectFolderSyncGetResult,
+  error: Schema.Union([ProjectFolderTransferError, EnvironmentAuthorizationError]),
+});
+const WsProjectsFolderSyncSetRpc = Rpc.make(WS_METHODS.projectsFolderSyncSet, {
+  payload: ProjectFolderSyncSetInput,
+  success: Schema.Void,
+  error: Schema.Union([ProjectFolderTransferError, EnvironmentAuthorizationError]),
+});
+const WsProjectsFolderExportEndRpc = Rpc.make(WS_METHODS.projectsFolderExportEnd, {
+  payload: ProjectFolderExportEndInput,
+  success: Schema.Void,
+  error: Schema.Union([ProjectFolderTransferError, EnvironmentAuthorizationError]),
+});
+const WsProjectsFolderExportRpc = Rpc.make(WS_METHODS.projectsFolderExport, {
+  payload: ProjectFolderExportInput,
+  success: ProjectFolderExportResult,
+  error: Schema.Union([ProjectFolderTransferError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsFolderImportRpc = Rpc.make(WS_METHODS.projectsFolderImport, {
+  payload: ProjectFolderImportInput,
+  success: ProjectFolderImportResult,
+  error: Schema.Union([ProjectFolderTransferError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsFolderReadRpc = Rpc.make(WS_METHODS.projectsFolderRead, {
+  payload: ProjectFolderReadInput,
+  success: ProjectFolderReadResult,
+  error: Schema.Union([ProjectFolderTransferError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsFolderWriteRpc = Rpc.make(WS_METHODS.projectsFolderWrite, {
+  payload: ProjectFolderWriteInput,
+  success: Schema.Void,
+  error: Schema.Union([ProjectFolderTransferError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsFolderFinishRpc = Rpc.make(WS_METHODS.projectsFolderFinish, {
+  payload: ProjectFolderSessionInput,
+  success: ProjectFolderFinishResult,
+  error: Schema.Union([ProjectFolderTransferError, EnvironmentAuthorizationError]),
+});
+
+const WsProjectsFolderCancelRpc = Rpc.make(WS_METHODS.projectsFolderCancel, {
+  payload: ProjectFolderSessionInput,
+  success: Schema.Void,
+  error: Schema.Union([ProjectFolderTransferError, EnvironmentAuthorizationError]),
+});
+
 const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
   payload: ProjectReadFileInput,
   success: ProjectReadFileResult,
@@ -2065,6 +2143,15 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeProjectClonesRpc,
   WsProjectsListEntriesRpc,
   WsProjectsListIgnoredFilesRpc,
+  WsProjectsFolderSyncGetRpc,
+  WsProjectsFolderSyncSetRpc,
+  WsProjectsFolderExportEndRpc,
+  WsProjectsFolderExportRpc,
+  WsProjectsFolderImportRpc,
+  WsProjectsFolderReadRpc,
+  WsProjectsFolderWriteRpc,
+  WsProjectsFolderFinishRpc,
+  WsProjectsFolderCancelRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,

@@ -207,6 +207,43 @@ export function createProjectEnvironmentAtoms<R, E>(
       scheduler: projectScheduler,
       concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
     }),
+    folderSyncGet: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:folder-sync-get",
+      tag: WS_METHODS.projectsFolderSyncGet,
+      staleTimeMs: 0,
+    }),
+    folderSyncSet: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:folder-sync-set",
+      tag: WS_METHODS.projectsFolderSyncSet,
+    }),
+    folderExportEnd: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:folder-export-end",
+      tag: WS_METHODS.projectsFolderExportEnd,
+    }),
+    folderExport: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:folder-export",
+      tag: WS_METHODS.projectsFolderExport,
+    }),
+    folderImport: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:folder-import",
+      tag: WS_METHODS.projectsFolderImport,
+    }),
+    folderRead: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:folder-read",
+      tag: WS_METHODS.projectsFolderRead,
+    }),
+    folderWrite: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:folder-write",
+      tag: WS_METHODS.projectsFolderWrite,
+    }),
+    folderFinish: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:folder-finish",
+      tag: WS_METHODS.projectsFolderFinish,
+    }),
+    folderCancel: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:folder-cancel",
+      tag: WS_METHODS.projectsFolderCancel,
+    }),
     writeFile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:write-file",
       tag: WS_METHODS.projectsWriteFile,

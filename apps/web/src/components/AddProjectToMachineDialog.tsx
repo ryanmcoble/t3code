@@ -1,3 +1,13 @@
+import {
+  copyProjectFolder,
+  linkProjectFolders,
+} from "@t3tools/client-runtime/operations/project-folder";
+import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
+import { useAtomValue } from "@effect/atom-react";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { orchestrationEnvironment } from "../state/orchestration";
+import { threadContextAttachment } from "../lib/threadContextAttachment";
 import { useParams } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
@@ -9,6 +19,7 @@ import {
   type EnvironmentId,
   type ProjectIgnoredFile,
   type ScopedProjectRef,
+  type ScopedThreadRef,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import {
@@ -17,7 +28,7 @@ import {
   cloneUrlProtocol,
 } from "@t3tools/shared/cloneUrl";
 import { ArrowRightIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useState, useRef } from "react";
 import { create } from "zustand";
 
 import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
@@ -30,8 +41,8 @@ import {
   isDefaultCopiedFile,
 } from "../lib/addProjectToMachine";
 import { formatBytes } from "../lib/formatBytes";
-import { newProjectId } from "../lib/utils";
-import { readProject, subscribeProject, useProject } from "../state/entities";
+import { newProjectId, randomUUID } from "../lib/utils";
+import { readProject, readThreadShell, subscribeProject, useProject } from "../state/entities";
 import { useEnvironments } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
@@ -56,6 +67,7 @@ import { Toggle, ToggleGroup } from "./ui/toggle-group";
 interface AddProjectToMachineRequest {
   readonly projectRef: ScopedProjectRef;
   readonly targetEnvironmentId: EnvironmentId | null;
+  readonly sourceThreadRef?: ScopedThreadRef;
 }
 
 const useRequest = create<{ request: AddProjectToMachineRequest | null; session: number }>(() => ({
@@ -109,15 +121,25 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const remoteUrl =
     (protocol === "ssh" ? sshUrl : protocol === "https" ? httpsUrl : null) ?? sourceUrl;
 
+  const canCopy = useAtomValue(
+    projectEnvironment.folderImport.permissionAtom(target?.environmentId ?? null),
+  );
+  const canExport = useAtomValue(
+    projectEnvironment.folderExport.permissionAtom(request.projectRef.environmentId),
+  );
   const targetEnvironment = environments.find((env) => env.environmentId === target?.environmentId);
+  const isFolder = sourceUrl.length === 0;
   const defaultPath = getCloneDestinationPath(
     getAddProjectInitialQuery(targetEnvironment?.serverConfig?.settings.addProjectBaseDirectory),
-    getCloneDirectoryName(sourceUrl),
+    isFolder
+      ? inferProjectTitleFromPath(project?.workspaceRoot ?? "folder")
+      : getCloneDirectoryName(sourceUrl),
   );
   const [pathOverride, setPathOverride] = useState<string | null>(null);
   const destinationPath = pathOverride ?? defaultPath;
 
-  const canListFiles = source?.serverConfig?.environment.capabilities.ignoredFileListing === true;
+  const canListFiles =
+    !isFolder && source?.serverConfig?.environment.capabilities.ignoredFileListing === true;
   const ignoredFiles = useEnvironmentQuery(
     project && canListFiles
       ? projectEnvironment.listIgnoredFiles({
@@ -134,7 +156,20 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     .filter((file) => selectedFiles.has(file.path))
     .reduce((total, file) => total + file.byteLength, 0);
 
+  const [keepInSync, setKeepInSync] = useState(false);
+  const canLinkSync = useAtomValue(
+    projectEnvironment.folderSyncSet.permissionAtom(request.projectRef.environmentId),
+  );
   const [submitting, setSubmitting] = useState(false);
+  const copyController = useRef<AbortController | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
+  const dismiss = () => {
+    if (submitting) {
+      copyController.current?.abort();
+      return;
+    }
+    close();
+  };
   const [error, setError] = useState<string | null>(null);
 
   // The project or every target can vanish while the dialog is open. Submitting
@@ -142,6 +177,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const unavailable =
     project === null ||
     target === null ||
+    (isFolder && (!canCopy || !canExport)) ||
     (canListFiles && ignoredFiles.data === null && ignoredFiles.error === null);
   const toggleFile = (path: string, checked: boolean) => {
     const next = new Set(selectedFiles);
@@ -183,7 +219,93 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     setSubmitting(true);
     setError(null);
     const projectId = newProjectId();
+    const fail = (message: string) => {
+      setError(message);
+      setSubmitting(false);
+    };
     try {
+      if (isFolder) {
+        if (
+          request.sourceThreadRef &&
+          readThreadShell(request.sourceThreadRef)?.runtime?.activeRunId
+        ) {
+          return fail("Stop the current turn before continuing on another machine.");
+        }
+        const controller = new AbortController();
+        copyController.current = controller;
+        let transcript: File | null = null;
+        if (request.sourceThreadRef) {
+          const result = await runAtomCommand(
+            appAtomRegistry,
+            orchestrationEnvironment.threadTranscript,
+            {
+              environmentId: request.sourceThreadRef.environmentId,
+              input: { threadId: request.sourceThreadRef.threadId },
+            },
+            { label: "Save thread context", reportFailure: false },
+          );
+          if (result._tag === "Failure") return fail(String(squashAtomCommandFailure(result)));
+          transcript = threadContextAttachment(request.sourceThreadRef.environmentId, result.value);
+          const limit =
+            targetEnvironment?.serverConfig?.environment.capabilities.fileAttachments
+              ?.maxUploadBytes;
+          if (limit !== undefined && transcript.size > limit)
+            return fail(
+              "This thread snapshot exceeds the destination's attachment limit. Copy the folder from project settings and attach a smaller handoff to a new thread.",
+            );
+        }
+        const cwd = await copyProjectFolder(appAtomRegistry, projectEnvironment, {
+          source: { environmentId: project.environmentId, cwd: project.workspaceRoot },
+          targetEnvironmentId: target.environmentId,
+          destinationPath: destinationPath.trim(),
+          signal: controller.signal,
+          onProgress: (copied, total) =>
+            setProgress(`${formatBytes(copied)} of ${formatBytes(total)}`),
+        });
+        const created = await runAtomCommand(
+          appAtomRegistry,
+          projectEnvironment.create,
+          {
+            environmentId: target.environmentId,
+            input: { projectId, title: project.title, workspaceRoot: cwd },
+          },
+          { label: "Add copied folder", reportFailure: false },
+        );
+        if (created._tag === "Failure") {
+          return fail(
+            `Files were copied to ${cwd}, but the project could not be added. Add that existing folder on ${target.label}.`,
+          );
+        }
+        if (keepInSync)
+          await linkProjectFolders(
+            appAtomRegistry,
+            projectEnvironment,
+            { environmentId: project.environmentId, cwd: project.workspaceRoot },
+            { environmentId: target.environmentId, cwd },
+          );
+        const targetRef = scopeProjectRef(target.environmentId, projectId);
+        if (transcript) {
+          const draft = await handleNewThread(targetRef);
+          if (!draft) return fail(`Folder copied to ${cwd}. Open a new thread there to continue.`);
+          const drafts = useComposerDraftStore.getState();
+          const accepted = drafts.addFiles(draft.draftId, [
+            {
+              type: "file",
+              id: randomUUID(),
+              name: transcript.name,
+              mimeType: transcript.type,
+              sizeBytes: transcript.size,
+              file: transcript,
+            },
+          ]);
+          if (accepted.length === 0)
+            return fail("The folder was copied, but the thread snapshot could not be attached.");
+        } else {
+          openClonedProject(targetRef);
+        }
+        close();
+        return;
+      }
       await addProjectToMachine({
         source: { environmentId: project.environmentId, cwd: project.workspaceRoot },
         subdirectory: projectSubdirectory(
@@ -200,7 +322,13 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
       close();
       openClonedProject(scopeProjectRef(target.environmentId, projectId));
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not start the clone.");
+      setError(
+        copyController.current?.signal.aborted
+          ? "Folder copy cancelled. The source is unchanged."
+          : cause instanceof Error
+            ? cause.message
+            : "Could not copy the project.",
+      );
       setSubmitting(false);
     }
   };
@@ -209,7 +337,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) close();
+        if (!open) dismiss();
       }}
     >
       <DialogPopup className="sm:max-w-xl">
@@ -223,8 +351,12 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
           <DialogHeader>
             <DialogTitle>Add to another machine</DialogTitle>
             <DialogDescription>
-              Clone {project?.repositoryIdentity?.displayName ?? project?.title} and bring the local
-              files git does not track.
+              {isFolder
+                ? `Copy ${project?.title ?? "this folder"} to another machine. The original stays here; the copies do not sync.`
+                : `Clone ${project?.repositoryIdentity?.displayName ?? project?.title} and bring the local files git does not track.`}
+              {request.sourceThreadRef
+                ? " Opens a new thread with a saved transcript attached. Review and send your next message there; the original thread stays here."
+                : ""}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -242,7 +374,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                 </span>
               </div>
               <div className="flex w-28 flex-col items-center gap-0.5 text-muted-foreground text-xs">
-                <span>git clone</span>
+                <span>{isFolder ? "Copy folder" : "git clone"}</span>
                 <span className="flex w-full items-center">
                   <span className="h-px flex-1 bg-border" />
                   <ArrowRightIcon className="-ms-1 size-3.5" aria-hidden />
@@ -256,6 +388,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
               <div className="flex min-w-0 flex-col gap-1">
                 {targets.length > 1 ? (
                   <Select
+                    disabled={submitting}
                     value={target?.environmentId ?? null}
                     onValueChange={(value) => {
                       if (value) setTargetId(value);
@@ -293,28 +426,33 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
               </div>
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <Label>Clone over</Label>
-              {sshUrl && httpsUrl ? (
-                <ToggleGroup
-                  aria-label="Clone protocol"
-                  value={protocol ? [protocol] : []}
-                  onValueChange={(next) => {
-                    const value = next[0];
-                    if (value === "ssh" || value === "https") setProtocol(value);
-                  }}
-                >
-                  <Toggle value="ssh">SSH</Toggle>
-                  <Toggle value="https">HTTPS</Toggle>
-                </ToggleGroup>
-              ) : null}
-              <span className="truncate font-mono text-muted-foreground text-xs">{remoteUrl}</span>
-            </div>
+            {!isFolder ? (
+              <div className="flex flex-col gap-1.5">
+                <Label>Clone over</Label>
+                {sshUrl && httpsUrl ? (
+                  <ToggleGroup
+                    aria-label="Clone protocol"
+                    value={protocol ? [protocol] : []}
+                    onValueChange={(next) => {
+                      const value = next[0];
+                      if (value === "ssh" || value === "https") setProtocol(value);
+                    }}
+                  >
+                    <Toggle value="ssh">SSH</Toggle>
+                    <Toggle value="https">HTTPS</Toggle>
+                  </ToggleGroup>
+                ) : null}
+                <span className="truncate font-mono text-muted-foreground text-xs">
+                  {remoteUrl}
+                </span>
+              </div>
+            ) : null}
 
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`${id}-path`}>Folder on {target?.label ?? "the other machine"}</Label>
               <Input
                 id={`${id}-path`}
+                disabled={submitting}
                 value={destinationPath}
                 onChange={(event) => setPathOverride(event.target.value)}
                 spellCheck={false}
@@ -381,14 +519,39 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
               </div>
             ) : null}
 
+            {isFolder && canLinkSync ? (
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={keepInSync}
+                  onCheckedChange={(checked) => setKeepInSync(checked === true)}
+                  disabled={submitting}
+                />
+                Link folders for manual two-way sync (including deletions)
+              </label>
+            ) : null}
+            {isFolder ? (
+              <p className="text-muted-foreground text-xs">
+                Includes hidden and binary files, including secrets stored in this folder. Up to 1
+                GiB and 10,000 entries. Links must stay inside the folder.
+              </p>
+            ) : null}
+            {progress ? (
+              <p role="status" className="text-muted-foreground text-sm">
+                Copying {progress}
+              </p>
+            ) : null}
             {error ? <p className="text-destructive-foreground text-sm">{error}</p> : null}
           </DialogPanel>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={close}>
+            <Button type="button" variant="outline" onClick={dismiss}>
               Cancel
             </Button>
             <Button type="submit" disabled={unavailable || submitting}>
-              {submitting ? "Starting…" : `Clone to ${target?.label ?? "machine"}`}
+              {submitting
+                ? isFolder
+                  ? "Copying…"
+                  : "Starting…"
+                : `${isFolder ? "Copy" : "Clone"} to ${target?.label ?? "machine"}`}
             </Button>
           </DialogFooter>
         </form>

@@ -201,7 +201,9 @@ const RunContextSelector = memo(function RunContextSelector({
         ? resolveEnvModeLabel("worktree")
         : resolveCurrentWorkspaceLabel(activeWorktreePath);
   const isPanel = displayMode === "panel";
-  const isLocked = envLocked || (envModeLocked && (!isPanel || !showEnvironmentPicker));
+  const isLocked =
+    addTargets.length === 0 &&
+    (envLocked || (envModeLocked && (!isPanel || !showEnvironmentPicker)));
   const workspacePath =
     forceNewWorktree || (effectiveEnvMode === "worktree" && !activeWorktreePath)
       ? null
@@ -676,7 +678,13 @@ export const BranchToolbar = memo(function BranchToolbar({
 
   const addTargets = useAddProjectTargets(activeProject, availableEnvironments);
   const onAddToMachine = (targetEnvironmentId: EnvironmentId | null) =>
-    openAddProjectToMachine({ projectRef: activeProjectRef, targetEnvironmentId });
+    openAddProjectToMachine({
+      projectRef: activeProjectRef,
+      targetEnvironmentId,
+      ...(isServerThread && !activeProject?.repositoryIdentity?.locator.remoteUrl
+        ? { sourceThreadRef: threadRef }
+        : {}),
+    });
   // A project on one machine still gets the picker when it can be added to another.
   const hasMultipleEnvironments = (availableEnvironments?.length ?? 0) > 1 || addTargets.length > 0;
   const showEnvironmentPicker = hasMultipleEnvironments && onEnvironmentChange !== undefined;

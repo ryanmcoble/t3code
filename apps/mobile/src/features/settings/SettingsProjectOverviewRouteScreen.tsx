@@ -1,3 +1,4 @@
+import { ProjectFolderActions } from "../projects/ProjectFolderActions";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -295,6 +296,9 @@ function ProjectOverviewContent(props: {
         </View>
       </SettingsSection>
 
+      <ProjectFolderActions
+        projectRef={{ environmentId: representative.environmentId, projectId: representative.id }}
+      />
       <SettingsSection title="Checkouts">
         {props.members.map((member, index) => {
           const environment = props.environments.find(

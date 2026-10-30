@@ -2,6 +2,7 @@ import {
   AuthEnvironmentMaintainScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   DEFAULT_SERVER_SETTINGS,
@@ -33,6 +34,23 @@ import * as RpcAuthorization from "./RpcAuthorization.ts";
 describe("RPC authorization scopes", () => {
   it("declares exactly one scope for every RPC in the server group", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
+  });
+
+  it("separates folder reads from writes and sync mutations", () => {
+    for (const method of [
+      WS_METHODS.projectsFolderExport,
+      WS_METHODS.projectsFolderRead,
+      WS_METHODS.projectsFolderSyncGet,
+    ])
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemReadScope);
+    for (const method of [
+      WS_METHODS.projectsFolderImport,
+      WS_METHODS.projectsFolderWrite,
+      WS_METHODS.projectsFolderFinish,
+      WS_METHODS.projectsFolderCancel,
+      WS_METHODS.projectsFolderSyncSet,
+    ])
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemWriteScope);
   });
 
   it("keeps webhook delivery logs, which hold request bodies, behind operate scope", () => {

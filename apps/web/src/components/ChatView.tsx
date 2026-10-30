@@ -1,3 +1,4 @@
+import { useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -1171,8 +1172,11 @@ export default function ChatView(props: ChatViewProps) {
     activeProject,
     activeProjectIsScratch && draftId !== null,
   );
-  const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
-  const canAutoBalanceEnvironments = hasMultipleEnvironments && !activeProjectIsScratch;
+  const folderTransferTargets = useAddProjectTargets(activeProject, logicalProjectEnvironments);
+  const hasMultipleEnvironments =
+    logicalProjectEnvironments.length > 1 || folderTransferTargets.length > 0;
+  const canAutoBalanceEnvironments =
+    logicalProjectEnvironments.length > 1 && !activeProjectIsScratch;
   const activeEnvironmentOption =
     logicalProjectEnvironments.find(
       (environment) => environment.environmentId === activeThread?.environmentId,

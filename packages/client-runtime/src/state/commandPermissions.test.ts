@@ -8,6 +8,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthAccessReadScope,
+  AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -67,6 +69,33 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect.each([
+    [WS_METHODS.projectsFolderExport, AuthFilesystemReadScope],
+    [WS_METHODS.projectsFolderExportEnd, AuthFilesystemReadScope],
+    [WS_METHODS.projectsFolderRead, AuthFilesystemReadScope],
+    [WS_METHODS.projectsFolderImport, AuthFilesystemWriteScope],
+    [WS_METHODS.projectsFolderWrite, AuthFilesystemWriteScope],
+    [WS_METHODS.projectsFolderFinish, AuthFilesystemWriteScope],
+    [WS_METHODS.projectsFolderCancel, AuthFilesystemWriteScope],
+    [WS_METHODS.projectsFolderSyncSet, AuthFilesystemWriteScope],
+  ] as const)("uses the destination filesystem grant for %s", ([method, scope]) =>
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const permission = createCommandPermissions(runtime, method);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({ ...grant(false), scopes: [scope], permissions: [scope] }),
+      );
+      registry.set(sessions(other), AsyncResult.success(grant(false)));
+      expect(registry.get(permission.permissionAtom(env))).toBe(true);
+      yield* permission.authorize(registry, env);
+      expect(registry.get(permission.permissionAtom(other))).toBe(false);
+      expect((yield* permission.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
+        "EnvironmentAuthorizationError",
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("requires the destination preview grant to close a browser tab", () =>
     Effect.scoped(
       Effect.gen(function* () {

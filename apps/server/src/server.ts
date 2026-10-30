@@ -1,3 +1,4 @@
+import * as ProjectFolderTransfer from "./project/ProjectFolderTransfer.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Random from "effect/Random";
@@ -471,6 +472,7 @@ const layerWorkspace = Layer.mergeAll(
   WorkspacePaths.layer,
   layerWorkspaceEntries,
   layerWorkspaceFileSystem,
+  ProjectFolderTransfer.layer.pipe(Layer.provide(layerKnownWorkspaces)),
 );
 
 const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(

@@ -1,3 +1,4 @@
+import * as ProjectFolderTransfer from "./project/ProjectFolderTransfer.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -1339,6 +1340,7 @@ export const layerWsRpc = (
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+      const folderTransfer = yield* ProjectFolderTransfer.ProjectFolderTransfer;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -2791,6 +2793,15 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.projectsFolderSyncGet]: (input) => folderTransfer.getSync(input),
+        [WS_METHODS.projectsFolderSyncSet]: (input) => folderTransfer.setSync(input),
+        [WS_METHODS.projectsFolderExportEnd]: (input) => folderTransfer.exportEnd(input),
+        [WS_METHODS.projectsFolderExport]: (input) => folderTransfer.exportFolder(input),
+        [WS_METHODS.projectsFolderImport]: (input) => folderTransfer.importFolder(input),
+        [WS_METHODS.projectsFolderRead]: (input) => folderTransfer.read(input),
+        [WS_METHODS.projectsFolderWrite]: (input) => folderTransfer.write(input),
+        [WS_METHODS.projectsFolderFinish]: (input) => folderTransfer.finish(input),
+        [WS_METHODS.projectsFolderCancel]: (input) => folderTransfer.cancel(input),
         [WS_METHODS.projectsReadFile]: (input) =>
           workspaceFileSystem.readFile(input).pipe(
             Effect.mapError(

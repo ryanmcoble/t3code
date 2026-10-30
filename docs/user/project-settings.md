@@ -231,3 +231,22 @@ On mobile, use **Settings → Source control** to change selected environment de
 T3 Code only pulls when it can fast-forward and the checkout has no changed files, untracked files,
 or local commits. It skips checkouts on another branch or without an upstream. If a checkout has
 local work, resolve it yourself before automatic pulls can resume.
+
+## Copying and syncing folders between machines
+
+For a project without a Git remote, use **Run on → Add to another machine** on web or desktop,
+or **Settings → Projects → Folder transfer and sync** on mobile. Choose a connected machine and
+an unused destination path. The copy includes hidden and binary files, including any secrets in
+the folder. The original stays in place. Both servers must support folder transfer. Copies are
+limited to 1 GiB and 10,000 entries; special files and links outside the folder are rejected.
+
+You can also copy from an existing stopped thread. T3 opens a new draft on the destination with a
+saved transcript attached. Send your next message there to continue. The original thread stays
+on its source machine; attachment metadata in the transcript does not copy old attachment bytes.
+
+Select **Link folders for manual two-way sync** while copying to enable **Sync folders** in the
+project's settings. Sync runs only when you request it, with both machines connected. Stop agents
+working in either folder first. Edits and deletions since the previous sync propagate in both
+directions. When both sides change the same path, sync keeps both versions in their folders and
+reports the conflict. Resolve it on disk before trying again. **Unlink sync** keeps both folders
+and stops future syncs. A folder can have one sync partner.
