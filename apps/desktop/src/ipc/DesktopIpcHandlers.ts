@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import { runVoiceInput, cancelVoiceInput } from "./methods/voiceInput.ts";
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
@@ -81,6 +82,8 @@ import {
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
+  yield* ipc.handle(runVoiceInput);
+  yield* ipc.handle(cancelVoiceInput);
   yield* installNotificationBadge();
   yield* PreviewIpc.installPreviewEventForwarding();
 

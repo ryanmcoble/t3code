@@ -15,6 +15,7 @@ import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
 import type { PreviewForwardedShortcut } from "./keybindings.ts";
+import type { DesktopVoiceInputRequest, DesktopVoiceInputResult } from "./voiceInput.ts";
 
 import type {
   DesktopAppActivationRequest,
@@ -1012,6 +1013,10 @@ export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
+  voiceInput: {
+    run: (request: DesktopVoiceInputRequest) => Promise<DesktopVoiceInputResult>;
+    cancel: (id: string) => Promise<void>;
+  };
   getAppBranding: () => DesktopAppBranding | null;
   getRelayTelemetryEnabled: () => boolean;
   getPathForFile: (file: File) => string;

@@ -1,4 +1,5 @@
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
+import { dispatchMenuAction } from "../shortcuts/dispatcher";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
 import {
@@ -58,6 +59,7 @@ import {
   ChevronRightIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
+  MicIcon,
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
@@ -404,6 +406,7 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
+  const voiceSettings = useClientSettings((settings) => settings.voiceInput);
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -1151,6 +1154,23 @@ function OpenCommandPaletteDialog(props: {
   };
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+  if (
+    (activeThread || activeDraftThread) &&
+    voiceSettings.engine !== "off" &&
+    (voiceSettings.engine === "server" || window.desktopBridge?.getClientPlatform() === "darwin")
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:dictation",
+      searchTerms: ["microphone", "voice", "speech", "dictation", "transcription"],
+      title: "Start or finish dictation",
+      icon: <MicIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "composer.dictation",
+      run: async () => {
+        dispatchMenuAction("composer.dictation");
+      },
+    });
+  }
 
   if (projects.length > 0) {
     const activeProjectTitle =

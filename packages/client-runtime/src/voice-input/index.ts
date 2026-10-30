@@ -17,3 +17,5 @@ export {
   type VoiceTranscriptionErrorCode,
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";
+export { listVoiceServerModels, transcribeOnVoiceServer, voiceServerUrl } from "./server.ts";
+export { encodeVoiceWav } from "./wav.ts";

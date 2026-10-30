@@ -1,4 +1,5 @@
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
+import { DEFAULT_VOICE_INPUT_SETTINGS, VoiceInputSettings } from "./voiceInput.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -349,6 +350,9 @@ export type ModelPreferences = {
 };
 
 export const ClientSettingsSchema = Schema.Struct({
+  voiceInput: VoiceInputSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_VOICE_INPUT_SETTINGS)),
+  ),
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
@@ -1717,6 +1721,7 @@ export function requiredScopesForProjectMutation(
 }
 
 export const ClientSettingsPatch = Schema.Struct({
+  voiceInput: Schema.optionalKey(VoiceInputSettings),
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),

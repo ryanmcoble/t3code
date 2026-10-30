@@ -585,6 +585,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["enter return command ctrl multiline prompt new line composer"],
   },
   {
+    id: "voice-input-engine",
+    title: "Transcription engine",
+    to: "/settings/chat",
+    searchTerms: [
+      "voice microphone dictation speech transcription audio mlx whisper server model language",
+    ],
+  },
+  {
     id: "follow-up-behavior",
     title: "Follow-up behavior",
     to: "/settings/chat",

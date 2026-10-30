@@ -269,6 +269,7 @@ function resolveMacBundleInfoPlistStrings(executableName) {
     CFBundleIconFile: "icon.icns",
     NSScreenCaptureUsageDescription:
       "T3 Code captures the active window when you use the snapshot shortcut.",
+    NSMicrophoneUsageDescription: "T3 Code uses your microphone for voice input.",
     NSDocumentsFolderUsageDescription: "T3 Code reads project files you open in the desktop app.",
   };
 }

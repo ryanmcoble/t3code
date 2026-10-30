@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
+import { VoiceInputSettings } from "./VoiceInputSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -1168,6 +1169,7 @@ export function ChatSettingsPanel() {
         </AdvancedSettings>
       </SettingsSection>
 
+      <VoiceInputSettings />
       <SettingsSection id="follow-ups" title="Follow-ups">
         <SettingsRow
           {...searchableSetting("follow-up-behavior")}

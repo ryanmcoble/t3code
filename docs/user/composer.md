@@ -174,6 +174,33 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Voice input on desktop and web
+
+Use the microphone in the composer to record, then finish to transcribe into your
+draft. Review and edit the text before sending. Cancel discards the recording and
+keeps your draft. The editor and send action pause while dictation is running.
+
+In **Settings → Chat → Voice input**, choose Apple transcription, a custom server,
+or Off. These settings belong to the client: native transcription uses the Mac
+running the desktop app even when your coding agent runs on another machine.
+
+Apple transcription requires a supported Mac with macOS 26 or later. Its first use
+may download language assets; subsequent transcription works offline. Choose a
+language tag such as `en-US`, or leave it blank to use the Mac's language.
+
+For a custom server, enter an API base URL such as `http://localhost:8000/v1`, a
+speech-to-text model ID, and an API key if required. The server must support
+`POST /v1/audio/transcriptions` with a JSON text response. MLX Audio is one option.
+Audio goes from your client to that server, independently of your coding agent's
+environment. Leave Language blank for the server to detect it automatically.
+Browser clients need microphone access in a secure context and a server that
+allows their origin and satisfies the browser's network access rules.
+
+Use **Test connection** to check the server's model listing endpoint. You can also
+start or finish dictation from the command palette or with **Cmd+Shift+D** on Mac
+(**Ctrl+Shift+D** elsewhere). Recordings use the system's current microphone, last
+up to five minutes, and are discarded after transcription or cancellation.
+
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,

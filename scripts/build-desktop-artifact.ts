@@ -2792,6 +2792,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : {}),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      ...(platform === "mac"
+        ? [{ from: "apps/desktop/prod-resources/voice-input", to: "voice-input" }]
+        : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
@@ -2832,7 +2835,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         NSCameraUsageDescription:
           "T3 Code lets commands run by terminals and coding agents use the camera.",
         NSMicrophoneUsageDescription:
-          "T3 Code lets commands run by terminals and coding agents use the microphone.",
+          "T3 Code uses your microphone for voice input and lets commands run by terminals and coding agents use it.",
         // macOS lists an app under Default web browser only when it opens web
         // pages as documents as well as http and https links (see protocols).
         CFBundleDocumentTypes: [
@@ -3791,6 +3794,22 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   );
 
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
+  if (options.platform === "mac") {
+    yield* runCommand(
+      ChildProcess.make(
+        "node",
+        [
+          path.join(repoRoot, "apps/desktop/scripts/build-apple-transcription.mjs"),
+          "--arch",
+          options.arch,
+          "--output",
+          path.join(stageResourcesDir, "voice-input", "t3-transcription"),
+        ],
+        { cwd: repoRoot },
+      ),
+      { label: "build Apple transcription helper", verbose: options.verbose },
+    );
+  }
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 

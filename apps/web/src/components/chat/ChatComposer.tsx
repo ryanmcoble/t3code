@@ -199,6 +199,8 @@ import {
 } from "./ComposerAttachmentStrip";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
+import { ComposerVoiceInput } from "./ComposerVoiceInput";
+import { useVoiceInput } from "~/voice-input/useVoiceInput";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
@@ -1017,6 +1019,47 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [composerMenuAnchor, setComposerMenuAnchor] = useState<HTMLDivElement | null>(null);
   const [hasWrappedPrompt, observeWrappedPrompt] = useComposerMultilinePrompt();
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
+  const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
+  const voiceInput = useVoiceInput({
+    ownerKey: composerDraftTargetKey,
+    disabled:
+      projectSelectionRequired ||
+      !canOperateThread ||
+      activePendingProgress !== null ||
+      isEditingQueuedMessage,
+    readDraft: () => {
+      const text = getComposerDraft(composerDraftTarget)?.prompt ?? "";
+      return {
+        ownerKey: composerDraftTargetKey,
+        text,
+        selection: composerEditorRef.current?.readSelectionRange() ?? {
+          start: text.length,
+          end: text.length,
+        },
+        revision: 0,
+      };
+    },
+    subscribeDraftChanges: (onChange) => {
+      let previous = getComposerDraft(composerDraftTarget)?.prompt ?? "";
+      return useComposerDraftStore.subscribe(() => {
+        const next = getComposerDraft(composerDraftTarget)?.prompt ?? "";
+        if (next !== previous) {
+          previous = next;
+          onChange();
+        }
+      });
+    },
+    commitDraft: (text, selection) => {
+      promptRef.current = text;
+      setComposerDraftPrompt(composerDraftTarget, text);
+      onTypingGuardDraftChange();
+      const cursor = collapseExpandedComposerCursor(text, selection.end);
+      setComposerCursor(cursor);
+      setComposerTrigger(detectComposerTrigger(text, selection.end));
+      composerEditorRef.current?.focusAt(cursor);
+    },
+  });
+  const pasteAsTextShortcutUntilRef = useRef(0);
   // A pending question stays expanded: its card moves into the banner dock,
   // so collapsing would leave the surface empty and squashed beneath it.
   const isComposerCollapsedMobile =
@@ -1024,10 +1067,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     !forceExpandedOnMobile &&
     !isComposerFocused &&
     !hasMultilinePrompt &&
+    !voiceInput.busy &&
     pendingUserInputs.length === 0;
-
-  const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
-  const pasteAsTextShortcutUntilRef = useRef(0);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const providerInputRejectedRef = useRef(false);
@@ -1220,6 +1261,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const showResumeAction =
     canResume && !composerDraftHasUserContent(composerDraft) && !isEditingQueuedMessage;
   const collapsedComposerPrimaryActionDisabled =
+    voiceInput.busy ||
     phase === "running" ||
     isSendBusy ||
     isSendDisabled ||
@@ -2046,6 +2088,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     submissionIntent?: ComposerSubmissionIntent,
   ) => {
     if (
+      voiceInput.busy ||
       noProviderAvailable ||
       isSendDisabled ||
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
@@ -3378,6 +3421,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 : DEFAULT_COMPOSER_PLACEHOLDER
                     }
                     disabled={
+                      voiceInput.busy ||
                       projectSelectionRequired ||
                       isChoiceOnlyPendingQuestion ||
                       activePendingIsResponding
@@ -3417,7 +3461,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             </div>
 
             <ComposerPromptLengthValidation
-              message={providerInputSubmissionError ?? composerSubmissionError}
+              message={
+                providerInputSubmissionError ?? composerSubmissionError ?? voiceInput.state.error
+              }
             />
 
             {isComposerCollapsedMobile ? null : (
@@ -3446,6 +3492,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
+                  {voiceInput.available && activePendingProgress === null ? (
+                    <ComposerVoiceInput
+                      state={voiceInput.state}
+                      disabled={
+                        projectSelectionRequired || !canOperateThread || isEditingQueuedMessage
+                      }
+                      onToggle={voiceInput.toggle}
+                      onCancel={voiceInput.cancel}
+                    />
+                  ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
@@ -3478,8 +3534,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }
                     promptHasText={prompt.trim().length > 0}
-                    isSendBusy={isSendBusy}
-                    sendDisabledReason={sendDisabledReason}
+                    isSendBusy={isSendBusy || voiceInput.busy}
+                    sendDisabledReason={
+                      voiceInput.busy
+                        ? "Finish or cancel dictation before sending."
+                        : sendDisabledReason
+                    }
                     isEnvironmentUnavailable={
                       environmentUnavailable !== null ||
                       noProviderAvailable ||

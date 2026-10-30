@@ -1,6 +1,10 @@
 import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 
-import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
+import {
+  VoiceTranscriptionError,
+  type PreparedVoiceTranscription,
+  type VoiceTranscriber,
+} from "./transcription.ts";
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 
@@ -128,7 +132,10 @@ let activeTranscriptionOperation: Promise<unknown> | null = null;
 
 function acquireSession(): VoiceInputSession | null {
   if (activeSession) return null;
-  const { promise, resolve } = Promise.withResolvers<void>();
+  let resolve = () => {};
+  const promise = new Promise<void>((release) => {
+    resolve = release;
+  });
   const token = { abandoned: false, released: promise, release: resolve };
   activeSession = token;
   return token;
@@ -161,6 +168,8 @@ function errorCode(error: unknown): string | null {
 }
 
 function preparationErrorMessage(error: unknown): string {
+  if (error instanceof VoiceTranscriptionError && error.code !== "unsupported-locale")
+    return error.message;
   if (error instanceof Error && error.message === "voice-operation-busy") {
     return "Voice transcription is still finishing. Try again shortly.";
   }
@@ -171,6 +180,7 @@ function preparationErrorMessage(error: unknown): string {
 }
 
 function transcriptionErrorMessage(error: unknown): string {
+  if (error instanceof VoiceTranscriptionError) return error.message;
   if (error instanceof Error && error.message === "voice-operation-busy") {
     return "Voice transcription is still finishing. Try again shortly.";
   }
@@ -271,9 +281,14 @@ export class VoiceInputController {
       this.capturedDraft = capturedDraft;
       this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
       this.setState({ phase: "recording", error: null, errorAction: null });
-    } catch {
+    } catch (error) {
       if (this.isCurrent(operationToken))
-        this.setError("Could not start voice recording.", "retry");
+        this.setError(
+          error instanceof VoiceTranscriptionError
+            ? error.message
+            : "Could not start voice recording.",
+          "retry",
+        );
     } finally {
       if (sessionToken && this.sessionToken === sessionToken) {
         if (this.isCurrent(operationToken) && this.state.phase === "error") {
