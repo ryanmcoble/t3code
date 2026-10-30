@@ -1,5 +1,6 @@
 import {
-  copyProjectFolder,
+  copyOrSyncProjectFolder,
+  findFolderSyncProject,
   linkProjectFolders,
 } from "@t3tools/client-runtime/operations/project-folder";
 import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
@@ -42,7 +43,13 @@ import {
 } from "../lib/addProjectToMachine";
 import { formatBytes } from "../lib/formatBytes";
 import { newProjectId, randomUUID } from "../lib/utils";
-import { readProject, readThreadShell, subscribeProject, useProject } from "../state/entities";
+import {
+  readProject,
+  readThreadShell,
+  subscribeProject,
+  useProject,
+  useProjects,
+} from "../state/entities";
 import { useEnvironments } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
@@ -107,10 +114,36 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const handleNewThread = useNewThreadHandler();
   const { draftId: routeDraftId } = useParams({ strict: false });
   const { environments } = useEnvironments();
-  const targets = useAddProjectTargets(project, useLogicalProjectEnvironments(project, false));
+  const projects = useProjects();
+  const projectEnvironments = useLogicalProjectEnvironments(project, false);
+  const newTargets = useAddProjectTargets(project, projectEnvironments);
+  const source = environments.find((env) => env.environmentId === request.projectRef.environmentId);
+  const folderSync = useEnvironmentQuery(
+    project &&
+      !project.repositoryIdentity?.locator.remoteUrl &&
+      source?.serverConfig?.environment.capabilities.projectFolderTransfer
+      ? projectEnvironment.folderSyncGet({
+          environmentId: project.environmentId,
+          input: { cwd: project.workspaceRoot },
+        })
+      : null,
+  );
+  const targets = [
+    ...newTargets,
+    ...projectEnvironments.filter(
+      (env) =>
+        env.environmentId === folderSync.data?.peerEnvironmentId &&
+        !newTargets.some((target) => target.environmentId === env.environmentId),
+    ),
+  ];
   const [targetId, setTargetId] = useState(request.targetEnvironmentId);
   const target = targets.find((t) => t.environmentId === targetId) ?? targets[0] ?? null;
-  const source = environments.find((env) => env.environmentId === request.projectRef.environmentId);
+  const reuseSyncedFolder = Boolean(
+    folderSync.data && target?.environmentId === folderSync.data.peerEnvironmentId,
+  );
+  const existingProject = reuseSyncedFolder
+    ? findFolderSyncProject(projects, folderSync.data)
+    : undefined;
   const sourceUrl =
     project?.repositoryIdentity?.origin?.remoteUrl ??
     project?.repositoryIdentity?.locator.remoteUrl ??
@@ -136,7 +169,9 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
       : getCloneDirectoryName(sourceUrl),
   );
   const [pathOverride, setPathOverride] = useState<string | null>(null);
-  const destinationPath = pathOverride ?? defaultPath;
+  const destinationPath = reuseSyncedFolder
+    ? folderSync.data!.peerPath
+    : (pathOverride ?? defaultPath);
 
   const canListFiles =
     !isFolder && source?.serverConfig?.environment.capabilities.ignoredFileListing === true;
@@ -160,6 +195,9 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const canLinkSync = useAtomValue(
     projectEnvironment.folderSyncSet.permissionAtom(request.projectRef.environmentId),
   );
+  const canSyncPeer = useAtomValue(
+    projectEnvironment.folderSyncSet.permissionAtom(target?.environmentId ?? null),
+  );
   const [submitting, setSubmitting] = useState(false);
   const copyController = useRef<AbortController | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
@@ -178,6 +216,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     project === null ||
     target === null ||
     (isFolder && (!canCopy || !canExport)) ||
+    (reuseSyncedFolder && (!canLinkSync || !canSyncPeer)) ||
     (canListFiles && ignoredFiles.data === null && ignoredFiles.error === null);
   const toggleFile = (path: string, checked: boolean) => {
     const next = new Set(selectedFiles);
@@ -218,7 +257,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
     }
     setSubmitting(true);
     setError(null);
-    const projectId = newProjectId();
+    const projectId = existingProject?.id ?? newProjectId();
     const fail = (message: string) => {
       setError(message);
       setSubmitting(false);
@@ -233,6 +272,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
         }
         const controller = new AbortController();
         copyController.current = controller;
+        if (reuseSyncedFolder) setProgress("Syncing folders…");
         let transcript: File | null = null;
         if (request.sourceThreadRef) {
           const result = await runAtomCommand(
@@ -254,7 +294,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
               "This thread snapshot exceeds the destination's attachment limit. Copy the folder from project settings and attach a smaller handoff to a new thread.",
             );
         }
-        const cwd = await copyProjectFolder(appAtomRegistry, projectEnvironment, {
+        const { cwd, reused } = await copyOrSyncProjectFolder(appAtomRegistry, projectEnvironment, {
           source: { environmentId: project.environmentId, cwd: project.workspaceRoot },
           targetEnvironmentId: target.environmentId,
           destinationPath: destinationPath.trim(),
@@ -262,21 +302,23 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
           onProgress: (copied, total) =>
             setProgress(`${formatBytes(copied)} of ${formatBytes(total)}`),
         });
-        const created = await runAtomCommand(
-          appAtomRegistry,
-          projectEnvironment.create,
-          {
-            environmentId: target.environmentId,
-            input: { projectId, title: project.title, workspaceRoot: cwd },
-          },
-          { label: "Add copied folder", reportFailure: false },
-        );
-        if (created._tag === "Failure") {
-          return fail(
-            `Files were copied to ${cwd}, but the project could not be added. Add that existing folder on ${target.label}.`,
+        if (!existingProject || !reused) {
+          const created = await runAtomCommand(
+            appAtomRegistry,
+            projectEnvironment.create,
+            {
+              environmentId: target.environmentId,
+              input: { projectId, title: project.title, workspaceRoot: cwd },
+            },
+            { label: "Add copied folder", reportFailure: false },
           );
+          if (created._tag === "Failure") {
+            return fail(
+              `Files were copied to ${cwd}, but the project could not be added. Add that existing folder on ${target.label}.`,
+            );
+          }
         }
-        if (keepInSync)
+        if (keepInSync && !reused)
           await linkProjectFolders(
             appAtomRegistry,
             projectEnvironment,
@@ -349,11 +391,15 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
           }}
         >
           <DialogHeader>
-            <DialogTitle>Add to another machine</DialogTitle>
+            <DialogTitle>
+              {reuseSyncedFolder ? "Continue on another machine" : "Add to another machine"}
+            </DialogTitle>
             <DialogDescription>
-              {isFolder
-                ? `Copy ${project?.title ?? "this folder"} to another machine. The original stays here; the copies do not sync.`
-                : `Clone ${project?.repositoryIdentity?.displayName ?? project?.title} and bring the local files git does not track.`}
+              {reuseSyncedFolder
+                ? "These folders are already linked. Sync changes and deletions, then continue on the other machine. Stop agents working in either folder before syncing."
+                : isFolder
+                  ? `Copy ${project?.title ?? "this folder"} to another machine. Both copies stay available.${keepInSync ? " Sync runs only when you request it." : " The copies do not sync."}`
+                  : `Clone ${project?.repositoryIdentity?.displayName ?? project?.title} and bring the local files git does not track.`}
               {request.sourceThreadRef
                 ? " Opens a new thread with a saved transcript attached. Review and send your next message there; the original thread stays here."
                 : ""}
@@ -374,17 +420,21 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                 </span>
               </div>
               <div className="flex w-28 flex-col items-center gap-0.5 text-muted-foreground text-xs">
-                <span>{isFolder ? "Copy folder" : "git clone"}</span>
+                <span>
+                  {reuseSyncedFolder ? "Sync folders" : isFolder ? "Copy folder" : "git clone"}
+                </span>
                 <span className="flex w-full items-center">
                   <span className="h-px flex-1 bg-border" />
                   <ArrowRightIcon className="-ms-1 size-3.5" aria-hidden />
                 </span>
                 <span>
-                  {isFolder
-                    ? "all files"
-                    : selectedFiles.size === 0
-                      ? "no files"
-                      : `+ ${selectedFiles.size} ${selectedFiles.size === 1 ? "file" : "files"}`}
+                  {reuseSyncedFolder
+                    ? "changes only"
+                    : isFolder
+                      ? "all files"
+                      : selectedFiles.size === 0
+                        ? "no files"
+                        : `+ ${selectedFiles.size} ${selectedFiles.size === 1 ? "file" : "files"}`}
                 </span>
               </div>
               <div className="flex min-w-0 flex-col gap-1">
@@ -454,7 +504,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
               <Label htmlFor={`${id}-path`}>Folder on {target?.label ?? "the other machine"}</Label>
               <Input
                 id={`${id}-path`}
-                disabled={submitting}
+                disabled={submitting || reuseSyncedFolder}
                 value={destinationPath}
                 onChange={(event) => setPathOverride(event.target.value)}
                 spellCheck={false}
@@ -521,7 +571,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
               </div>
             ) : null}
 
-            {isFolder && canLinkSync ? (
+            {isFolder && canLinkSync && !reuseSyncedFolder ? (
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox
                   checked={keepInSync}
@@ -539,7 +589,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
             ) : null}
             {progress ? (
               <p role="status" className="text-muted-foreground text-sm">
-                Copying {progress}
+                {reuseSyncedFolder ? "Syncing folders…" : `Copying ${progress}`}
               </p>
             ) : null}
             {error ? <p className="text-destructive-foreground text-sm">{error}</p> : null}
@@ -551,9 +601,13 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
             <Button type="submit" disabled={unavailable || submitting}>
               {submitting
                 ? isFolder
-                  ? "Copying…"
+                  ? reuseSyncedFolder
+                    ? "Syncing…"
+                    : "Copying…"
                   : "Starting…"
-                : `${isFolder ? "Copy" : "Clone"} to ${target?.label ?? "machine"}`}
+                : reuseSyncedFolder
+                  ? `Sync and continue on ${target?.label ?? "machine"}`
+                  : `${isFolder ? "Copy" : "Clone"} to ${target?.label ?? "machine"}`}
             </Button>
           </DialogFooter>
         </form>

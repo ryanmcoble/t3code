@@ -23,7 +23,6 @@ import {
 interface BranchToolbarEnvironmentSelectorProps {
   autoEnvironmentLabel?: string | undefined;
   onAutoEnvironment?: (() => void) | undefined;
-  envLocked: boolean;
   environmentId: EnvironmentId;
   availableEnvironments: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
@@ -38,7 +37,6 @@ const environmentValue = (id: EnvironmentId) => `env:${id}`;
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
   autoEnvironmentLabel,
   onAutoEnvironment,
-  envLocked,
   environmentId,
   availableEnvironments,
   onEnvironmentChange,
@@ -65,10 +63,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
 
   // Match the xs control's height and padding: the composer strip has no min-height,
   // and its glass seam assumes that height even when this label is the only control.
-  if (
-    (envLocked && onAddToMachine === undefined) ||
-    (onEnvironmentChange === undefined && onAddToMachine === undefined)
-  ) {
+  if (onEnvironmentChange === undefined && onAddToMachine === undefined) {
     const lockedRow = (
       <span
         className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-xs sm:h-6"
@@ -153,10 +148,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             <SelectItem
               key={env.environmentId}
               value={environmentValue(env.environmentId)}
-              disabled={
-                (envLocked || onEnvironmentChange === undefined) &&
-                env.environmentId !== environmentId
-              }
+              disabled={onEnvironmentChange === undefined && env.environmentId !== environmentId}
             >
               <span className="inline-flex items-center gap-1.5">
                 <EnvironmentMachineIcon kind={env.machine} className="size-3" />

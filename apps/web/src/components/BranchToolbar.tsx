@@ -306,7 +306,7 @@ const RunContextSelector = memo(function RunContextSelector({
         }
         data-composer-context-control
         data-composer-shortcut={[
-          showEnvironmentPicker && !envLocked ? "composer.host" : "",
+          showEnvironmentPicker ? "composer.host" : "",
           !envModeLocked ? "composer.workspace" : "",
         ].join(" ")}
       >
@@ -357,9 +357,7 @@ const RunContextSelector = memo(function RunContextSelector({
                 {availableEnvironments.map((env) => (
                   <MenuRadioItem
                     key={env.environmentId}
-                    disabled={
-                      envLocked || (!onEnvironmentChange && env.environmentId !== environmentId)
-                    }
+                    disabled={!onEnvironmentChange && env.environmentId !== environmentId}
                     value={env.environmentId}
                     closeOnClick
                   >
@@ -791,7 +789,6 @@ export const BranchToolbar = memo(function BranchToolbar({
               <BranchToolbarEnvironmentSelector
                 autoEnvironmentLabel={autoEnvironmentLabel}
                 onAutoEnvironment={onAutoEnvironment}
-                envLocked={envLocked}
                 environmentId={environmentId}
                 availableEnvironments={availableEnvironments}
                 {...(showEnvironmentPicker ? { onEnvironmentChange } : {})}

@@ -26,7 +26,10 @@ export const ProjectFolderImportInput = Schema.Struct({
   entries: ProjectFolderEntries,
   previousEntries: Schema.optional(ProjectFolderEntries),
 });
-export const ProjectFolderImportResult = ProjectFolderSessionInput;
+export const ProjectFolderImportResult = Schema.Struct({
+  ...ProjectFolderSessionInput.fields,
+  parallelChunks: Schema.optional(Schema.Boolean),
+});
 export const ProjectFolderReadInput = Schema.Struct({
   ...ProjectFolderSessionInput.fields,
   relativePath: TrimmedNonEmptyString,
@@ -71,7 +74,7 @@ export class ProjectFolderTransferError extends Schema.TaggedError<ProjectFolder
       case "invalid_session":
         return "The folder transfer expired or is no longer available. Try again.";
       case "invalid_chunk":
-        return "The folder transfer received an invalid or out-of-order chunk.";
+        return "The folder transfer received an invalid or overlapping chunk.";
       case "incomplete":
         return "The folder copy is incomplete. Try again.";
       case "io":

@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
-  copyProjectFolder,
+  copyOrSyncProjectFolder,
+  findFolderSyncProject,
   linkProjectFolders,
   syncProjectFolder,
 } from "@t3tools/client-runtime/operations/project-folder";
@@ -24,7 +25,7 @@ import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { SelectionRow } from "../../components/ui/SelectionRow";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
-import { useProject } from "../../state/entities";
+import { useProject, useProjects } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
@@ -47,6 +48,7 @@ export function ProjectFolderActions(props: {
   readonly onCopied?: (project: EnvironmentProject) => void;
 }) {
   const project = useProject(props.projectRef);
+  const projects = useProjects();
   const { environments } = useEnvironments();
   const source = environments.find(
     (entry) => entry.environmentId === props.projectRef.environmentId,
@@ -65,7 +67,7 @@ export function ProjectFolderActions(props: {
   const [targetId, setTargetId] = useState<string | null>(null);
   const target = targets.find((entry) => entry.environmentId === targetId) ?? targets[0];
   const [pathOverride, setPathOverride] = useState<string | null>(null);
-  const path =
+  const copyPath =
     pathOverride ??
     getCloneDestinationPath(
       getAddProjectInitialQuery(target?.serverConfig?.settings.addProjectBaseDirectory),
@@ -86,6 +88,9 @@ export function ProjectFolderActions(props: {
       : null;
   const sync = useEnvironmentQuery(query);
   const pair = sync.data;
+  const reuseSyncedFolder =
+    pair !== null && target !== undefined && pair.peerEnvironmentId === target.environmentId;
+  const path = reuseSyncedFolder ? pair!.peerPath : copyPath;
   const canExport = useAtomValue(
     projectEnvironment.folderExport.permissionAtom(props.projectRef.environmentId),
   );
@@ -139,7 +144,7 @@ export function ProjectFolderActions(props: {
       setMessage("Folders unlinked. Both copies are kept.");
     } else if (action === "copy" && target) {
       controller.current = new AbortController();
-      const cwd = await copyProjectFolder(appAtomRegistry, projectEnvironment, {
+      const { cwd, reused } = await copyOrSyncProjectFolder(appAtomRegistry, projectEnvironment, {
         source: { environmentId: project.environmentId, cwd: project.workspaceRoot },
         targetEnvironmentId: target.environmentId,
         destinationPath: path.trim(),
@@ -147,21 +152,25 @@ export function ProjectFolderActions(props: {
         onProgress: (copied, total) =>
           setMessage(`Copying ${Math.round(total === 0 ? 100 : (copied / total) * 100)}%`),
       });
-      const projectId = ProjectId.make(uuidv4());
-      const created = await runAtomCommand(
-        appAtomRegistry,
-        projectEnvironment.create,
-        {
-          environmentId: target.environmentId,
-          input: { projectId, title: project.title, workspaceRoot: cwd },
-        },
-        { label: "Add copied folder", reportFailure: false },
-      );
-      if (created._tag === "Failure")
-        return setMessage(
-          `Folder copied to ${cwd}, but the project could not be added. Add that folder on ${target.label}.`,
+      let targetProject = reused ? findFolderSyncProject(projects, pair) : undefined;
+      const projectId = targetProject?.id ?? ProjectId.make(uuidv4());
+      if (!targetProject) {
+        const created = await runAtomCommand(
+          appAtomRegistry,
+          projectEnvironment.create,
+          {
+            environmentId: target.environmentId,
+            input: { projectId, title: project.title, workspaceRoot: cwd },
+          },
+          { label: "Add copied folder", reportFailure: false },
         );
-      if (linked)
+        if (created._tag === "Failure")
+          return setMessage(
+            `Folder copied to ${cwd}, but the project could not be added. Add that folder on ${target.label}.`,
+          );
+        targetProject = { ...created.value, environmentId: target.environmentId };
+      }
+      if (linked && !reused)
         await linkProjectFolders(
           appAtomRegistry,
           projectEnvironment,
@@ -202,8 +211,12 @@ export function ProjectFolderActions(props: {
             },
           },
         });
-      } else props.onCopied?.({ ...created.value, environmentId: target.environmentId });
-      setMessage(`Folder copied to ${target.label}. The original stays here.`);
+      } else props.onCopied?.(targetProject);
+      setMessage(
+        reused
+          ? `Folders synced. Continue on ${target.label}.`
+          : `Folder copied to ${target.label}. The original stays here.`,
+      );
     }
     if (query) appAtomRegistry.refresh(query);
   };
@@ -247,11 +260,11 @@ export function ProjectFolderActions(props: {
             className="min-h-11 rounded-xl bg-card px-3 text-foreground"
             value={path}
             onChangeText={setPathOverride}
-            editable={!busy}
+            editable={!busy && !reuseSyncedFolder}
             autoCapitalize="none"
             autoCorrect={false}
           />
-          {canSyncHere ? (
+          {canSyncHere && !reuseSyncedFolder ? (
             <View className="flex-row items-center gap-3">
               <Text className="flex-1 text-sm text-foreground">
                 Link for manual two-way sync, including deletions
@@ -264,7 +277,13 @@ export function ProjectFolderActions(props: {
             sync only when you click Sync.
           </Text>
           <Button
-            label={props.sourceThreadRef ? "Copy folder and continue thread" : "Copy folder"}
+            label={
+              reuseSyncedFolder
+                ? "Sync and continue thread"
+                : props.sourceThreadRef
+                  ? "Copy folder and continue thread"
+                  : "Copy folder"
+            }
             disabled={busy || !canExport || !canCopy || !path.trim() || props.threadActive}
             onPress={() => void run("copy")}
           />

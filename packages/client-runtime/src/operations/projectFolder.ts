@@ -9,6 +9,9 @@ import type { AtomRegistry } from "effect/reactivity";
 
 import type { createProjectEnvironmentAtoms } from "../state/projectCommands.ts";
 import { executeAtomQuery, runAtomCommand, squashAtomCommandFailure } from "../state/runtime.ts";
+import { normalizeProjectPathForComparison } from "../state/projects.ts";
+
+export { findFolderSyncProject } from "./projectFolderSync.ts";
 
 type FolderCommandName =
   | "folderExport"
@@ -25,6 +28,81 @@ type FolderCommands<R, E> = {
     "run" | "label"
   >;
 } & Pick<ReturnType<typeof createProjectEnvironmentAtoms<R, E>>, "folderSyncGet">;
+
+async function transferFolderFiles<R, E>(
+  registry: AtomRegistry.AtomRegistry,
+  commands: FolderCommands<R, E>,
+  files: Iterable<{
+    readonly entry: ProjectFolderEntry;
+    readonly environmentId: EnvironmentId;
+    readonly transferId: string;
+  }>,
+  target: {
+    readonly environmentId: EnvironmentId;
+    readonly transferId: string;
+    readonly parallelChunks?: boolean | undefined;
+  },
+  options: {
+    readonly signal?: AbortSignal | undefined;
+    readonly onProgress?: (bytes: number, path: string) => void;
+  } = {},
+) {
+  function* chunks() {
+    for (const file of files)
+      for (let offset = 0; offset < file.entry.byteLength; offset += PROJECT_FOLDER_CHUNK_BYTES)
+        yield { ...file, offset };
+  }
+  const pending = chunks();
+  const commandOptions = { label: "Transfer folder files", reportFailure: false };
+  let failure: { cause: unknown } | undefined;
+  const worker = async () => {
+    try {
+      for (;;) {
+        if (failure) return;
+        options.signal?.throwIfAborted();
+        const next = pending.next();
+        if (next.done) return;
+        const { entry, environmentId, transferId, offset } = next.value;
+        const read = await runAtomCommand(
+          registry,
+          commands.folderRead,
+          {
+            environmentId,
+            input: { transferId, relativePath: entry.path, offset },
+          },
+          commandOptions,
+        );
+        if (read._tag === "Failure") throw squashAtomCommandFailure(read);
+        options.signal?.throwIfAborted();
+        if (failure) return;
+        const write = await runAtomCommand(
+          registry,
+          commands.folderWrite,
+          {
+            environmentId: target.environmentId,
+            input: {
+              transferId: target.transferId,
+              relativePath: entry.path,
+              offset,
+              contents: read.value.contents,
+            },
+          },
+          commandOptions,
+        );
+        if (write._tag === "Failure") throw squashAtomCommandFailure(write);
+        options.onProgress?.(
+          Math.min(PROJECT_FOLDER_CHUNK_BYTES, entry.byteLength - offset),
+          entry.path,
+        );
+      }
+    } catch (cause) {
+      failure ??= { cause };
+    }
+  };
+  // Bound queued payloads and drain requests before the caller removes transfer sessions.
+  await Promise.all(Array.from({ length: target.parallelChunks ? 8 : 1 }, worker));
+  if (failure) throw failure.cause;
+}
 
 export async function copyProjectFolder<R, E>(
   registry: AtomRegistry.AtomRegistry,
@@ -67,40 +145,25 @@ export async function copyProjectFolder<R, E>(
     const total = exported.value.entries.reduce((sum, entry) => sum + entry.byteLength, 0);
     let copied = 0;
     input.onProgress?.(0, total);
-    for (const entry of exported.value.entries) {
-      if (entry.kind !== "file") continue;
-      for (let offset = 0; offset < entry.byteLength; offset += PROJECT_FOLDER_CHUNK_BYTES) {
-        checkCancelled();
-        const read = await runAtomCommand(
-          registry,
-          commands.folderRead,
-          {
-            environmentId: input.source.environmentId,
-            input: { transferId: exported.value.transferId, relativePath: entry.path, offset },
-          },
-          options,
-        );
-        if (read._tag === "Failure") throw squashAtomCommandFailure(read);
-        checkCancelled();
-        const written = await runAtomCommand(
-          registry,
-          commands.folderWrite,
-          {
-            environmentId: input.targetEnvironmentId,
-            input: {
-              transferId: targetTransferId,
-              relativePath: entry.path,
-              offset,
-              contents: read.value.contents,
-            },
-          },
-          options,
-        );
-        if (written._tag === "Failure") throw squashAtomCommandFailure(written);
-        copied += Math.min(PROJECT_FOLDER_CHUNK_BYTES, entry.byteLength - offset);
-        input.onProgress?.(copied, total);
-      }
-    }
+    await transferFolderFiles(
+      registry,
+      commands,
+      exported.value.entries
+        .filter((entry) => entry.kind === "file")
+        .map((entry) => ({
+          entry,
+          environmentId: input.source.environmentId,
+          transferId: exported.value.transferId,
+        })),
+      { environmentId: input.targetEnvironmentId, ...imported.value },
+      {
+        signal: input.signal,
+        onProgress: (bytes) => {
+          copied += bytes;
+          input.onProgress?.(copied, total);
+        },
+      },
+    );
     checkCancelled();
     const checked = await runAtomCommand(
       registry,
@@ -200,6 +263,9 @@ export async function linkProjectFolders<R, E>(
         options,
       );
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      registry.refresh(
+        commands.folderSyncGet({ environmentId: folder.environmentId, input: { cwd: folder.cwd } }),
+      );
     }
   } finally {
     await runAtomCommand(
@@ -214,13 +280,42 @@ export async function linkProjectFolders<R, E>(
   }
 }
 
+export async function copyOrSyncProjectFolder<R, E>(
+  registry: AtomRegistry.AtomRegistry,
+  commands: FolderCommands<R, E>,
+  input: Parameters<typeof copyProjectFolder<R, E>>[2],
+): Promise<{ cwd: string; reused: boolean }> {
+  const result = await executeAtomQuery(
+    registry,
+    commands.folderSyncGet({
+      environmentId: input.source.environmentId,
+      input: { cwd: input.source.cwd },
+    }),
+    { label: "Check folder sync", reportFailure: false, refresh: true },
+  );
+  if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+  const state = result.value;
+  if (
+    state?.peerEnvironmentId === input.targetEnvironmentId &&
+    normalizeProjectPathForComparison(state.peerPath) ===
+      normalizeProjectPathForComparison(input.destinationPath)
+  ) {
+    input.signal?.throwIfAborted();
+    await syncProjectFolder(registry, commands, input.source, state, undefined, input.signal);
+    return { cwd: state.peerPath, reused: true };
+  }
+  return { cwd: await copyProjectFolder(registry, commands, input), reused: false };
+}
+
 export async function syncProjectFolder<R, E>(
   registry: AtomRegistry.AtomRegistry,
   commands: FolderCommands<R, E>,
   local: { environmentId: EnvironmentId; cwd: string },
   state: ProjectFolderSyncState,
   onProgress?: (message: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   const options = { label: "Sync folders", reportFailure: false };
   const localState = await executeAtomQuery(
     registry,
@@ -230,6 +325,11 @@ export async function syncProjectFolder<R, E>(
   if (localState._tag === "Failure") throw squashAtomCommandFailure(localState);
   if (localState.value === null)
     throw new Error("Folder sync has been unlinked. Refresh and try again.");
+  if (
+    localState.value.peerEnvironmentId !== state.peerEnvironmentId ||
+    localState.value.peerPath !== state.peerPath
+  )
+    throw new Error("This folder's sync partner changed. Refresh and try again.");
   state = localState.value;
   const remote = { environmentId: state.peerEnvironmentId, cwd: state.peerPath };
   const peerState = await executeAtomQuery(
@@ -262,6 +362,7 @@ export async function syncProjectFolder<R, E>(
   try {
     onProgress?.("Comparing folders…");
     for (const folder of [local, remote]) {
+      signal?.throwIfAborted();
       const result = await runAtomCommand(
         registry,
         commands.folderExport,
@@ -302,47 +403,27 @@ export async function syncProjectFolder<R, E>(
       if (prepared._tag === "Failure") throw squashAtomCommandFailure(prepared);
       const target = {
         environmentId: destination.environmentId,
-        transferId: prepared.value.transferId,
+        ...prepared.value,
       };
       imports.push(target);
-      for (const { entry, source } of plan.merged) {
-        if (
-          entry.kind !== "file" ||
-          (entry.hash &&
-            previous.get(entry.path)?.kind === "file" &&
-            previous.get(entry.path)?.hash === entry.hash)
+      const files = plan.merged
+        .filter(
+          ({ entry }) =>
+            !(
+              entry.kind !== "file" ||
+              (entry.hash &&
+                previous.get(entry.path)?.kind === "file" &&
+                previous.get(entry.path)?.hash === entry.hash)
+            ),
         )
-          continue;
-        onProgress?.(`Copying ${entry.path}…`);
-        const origin = source === "local" ? left : right;
-        for (let offset = 0; offset < entry.byteLength; offset += PROJECT_FOLDER_CHUNK_BYTES) {
-          const read = await runAtomCommand(
-            registry,
-            commands.folderRead,
-            {
-              environmentId: origin.environmentId,
-              input: { transferId: origin.transferId, relativePath: entry.path, offset },
-            },
-            options,
-          );
-          if (read._tag === "Failure") throw squashAtomCommandFailure(read);
-          const write = await runAtomCommand(
-            registry,
-            commands.folderWrite,
-            {
-              environmentId: target.environmentId,
-              input: {
-                transferId: target.transferId,
-                relativePath: entry.path,
-                offset,
-                contents: read.value.contents,
-              },
-            },
-            options,
-          );
-          if (write._tag === "Failure") throw squashAtomCommandFailure(write);
-        }
-      }
+        .map(({ entry, source }) => {
+          const origin = source === "local" ? left : right;
+          return { entry, environmentId: origin.environmentId, transferId: origin.transferId };
+        });
+      await transferFolderFiles(registry, commands, files, target, {
+        signal,
+        onProgress: (_bytes, path) => onProgress?.(`Copying ${path}…`),
+      });
     }
     for (const snapshot of snapshots) {
       const checked = await runAtomCommand(
@@ -357,6 +438,7 @@ export async function syncProjectFolder<R, E>(
       if (checked._tag === "Failure") throw squashAtomCommandFailure(checked);
     }
     onProgress?.("Applying changes and deletions…");
+    signal?.throwIfAborted();
     for (const target of imports) {
       const finished = await runAtomCommand(
         registry,

@@ -15,6 +15,9 @@ import {
 import { useProjects } from "../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useClientSettings } from "./useSettings";
+import { findFolderSyncProject } from "@t3tools/client-runtime/operations/project-folder";
+import { projectEnvironment } from "../state/projects";
+import { useEnvironmentQuery } from "../state/query";
 
 export function useLogicalProjectEnvironments(
   activeProject: EnvironmentProject | null,
@@ -24,6 +27,20 @@ export function useLogicalProjectEnvironments(
   const allProjects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const source = environments.find(
+    (environment) => environment.environmentId === activeProject?.environmentId,
+  );
+  const sync = useEnvironmentQuery(
+    activeProject &&
+      !scratchDraft &&
+      source?.serverConfig?.environment.capabilities.projectFolderTransfer
+      ? projectEnvironment.folderSyncGet({
+          environmentId: activeProject.environmentId,
+          input: { cwd: activeProject.workspaceRoot },
+        })
+      : null,
+  );
+  const peer = findFolderSyncProject(allProjects, sync.data);
 
   if (!activeProject) return [];
   const environmentById = new Map(
@@ -62,7 +79,11 @@ export function useLogicalProjectEnvironments(
     const seen = new Set<string>();
     for (const p of allProjects) {
       if (seen.has(p.environmentId)) continue;
-      if (deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) !== logicalKey) continue;
+      if (
+        p !== peer &&
+        deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) !== logicalKey
+      )
+        continue;
       seen.add(p.environmentId);
       pushEnvironment(p.environmentId, p.id);
     }

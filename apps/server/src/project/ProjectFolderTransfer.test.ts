@@ -1,6 +1,7 @@
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import {
   copyProjectFolder,
+  copyOrSyncProjectFolder,
   linkProjectFolders,
   syncProjectFolder,
 } from "../../../../packages/client-runtime/src/operations/projectFolder.ts";
@@ -70,7 +71,10 @@ describe("ProjectFolderTransfer", () => {
     () =>
       Effect.gen(function* () {
         const { source, destination, service } = yield* fixture;
-        const bytes = Buffer.alloc(PROJECT_FOLDER_CHUNK_BYTES + 123, 0xff);
+        const bytes = Buffer.alloc(PROJECT_FOLDER_CHUNK_BYTES * 3 + 123);
+        bytes.forEach((_, index) => {
+          bytes[index] = index % 251;
+        });
         yield* Effect.promise(async () => {
           await NodeFSP.writeFile(NodePath.join(source, "binary"), bytes);
           await NodeFSP.writeFile(NodePath.join(source, ".env"), "SECRET=value\n");
@@ -85,7 +89,11 @@ describe("ProjectFolderTransfer", () => {
           entries: exported.entries,
         });
         for (const entry of exported.entries.filter((entry) => entry.kind === "file")) {
-          for (let offset = 0; offset < entry.byteLength; offset += PROJECT_FOLDER_CHUNK_BYTES) {
+          const offsets = Array.from(
+            { length: Math.ceil(entry.byteLength / PROJECT_FOLDER_CHUNK_BYTES) },
+            (_, index) => index * PROJECT_FOLDER_CHUNK_BYTES,
+          ).reverse();
+          for (const offset of offsets) {
             const chunk = yield* service.read({
               transferId: exported.transferId,
               relativePath: entry.path,
@@ -97,6 +105,16 @@ describe("ProjectFolderTransfer", () => {
               offset,
               contents: chunk.contents,
             });
+            expect(
+              (yield* service
+                .write({
+                  transferId: imported.transferId,
+                  relativePath: entry.path,
+                  offset,
+                  contents: chunk.contents,
+                })
+                .pipe(Effect.flip)).reason,
+            ).toBe("invalid_chunk");
           }
         }
         expect(yield* service.finish(imported)).toEqual({ cwd: destination });
@@ -329,7 +347,15 @@ describe("ProjectFolderTransfer", () => {
           await NodeFSP.writeFile(NodePath.join(destination, "remote"), "remote edit");
           await NodeFSP.rm(NodePath.join(destination, "delete"));
         });
-        yield* Effect.promise(() => syncProjectFolder(registry, commands, local, state));
+        expect(
+          yield* Effect.promise(() =>
+            copyOrSyncProjectFolder(registry, commands, {
+              source: local,
+              targetEnvironmentId: remote.environmentId,
+              destinationPath: destination,
+            }),
+          ),
+        ).toEqual({ cwd: destination, reused: true });
         yield* Effect.promise(async () => {
           for (const folder of [source, destination]) {
             expect(await NodeFSP.readdir(folder)).toEqual(["local", "remote"]);

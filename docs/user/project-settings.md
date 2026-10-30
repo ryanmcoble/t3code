@@ -243,6 +243,7 @@ and links outside the folder are rejected.
 You can also copy from an existing stopped thread. T3 opens a new draft on the destination with a
 saved transcript attached. Send your next message there to continue. The original thread stays
 on its source machine; attachment metadata in the transcript does not copy old attachment bytes.
+The T3 client stays on your current device; only the destination server runs the new thread.
 
 Select **Link folders for manual two-way sync** while copying to enable **Sync folders** in the
 project's settings. Sync runs only when you request it, with both machines connected. Stop agents
@@ -250,3 +251,10 @@ working in either folder first. Edits and deletions since the previous sync prop
 directions. When both sides change the same path, sync keeps both versions in their folders and
 reports the conflict. Resolve it on disk before trying again. **Unlink sync** keeps both folders
 and stops future syncs. A folder can have one sync partner.
+
+Once linked, both machines appear under **Run on** for new threads. Choose either machine to
+use its copy. In an existing thread, choose the other machine and **Sync and continue** to sync
+changes into the existing folder and open a continuation with the saved transcript. Finish or
+stop the current turn first. This reuses the destination folder and project; it does not need
+another full copy. A new thread does not sync files automatically, so request a sync first when
+you need changes made on the other machine.

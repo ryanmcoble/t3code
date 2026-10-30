@@ -11,6 +11,7 @@ import {
   type ProjectFolderExportInput,
   type ProjectFolderExportResult,
   type ProjectFolderImportInput,
+  type ProjectFolderImportResult,
   type ProjectFolderReadInput,
   type ProjectFolderWriteInput,
 } from "@t3tools/contracts";
@@ -34,6 +35,7 @@ interface Transfer {
   readonly entries: ReadonlyArray<ProjectFolderEntry>;
   readonly entriesByPath: ReadonlyMap<string, ProjectFolderEntry>;
   readonly offsets: Map<string, number>;
+  readonly pendingOffsets: Map<string, Set<number>>;
   readonly modified: Map<string, number>;
   readonly previousEntries?: ReadonlyArray<ProjectFolderEntry>;
   touchedAt: number;
@@ -58,7 +60,7 @@ export class ProjectFolderTransfer extends Context.Service<
     ) => Effect.Effect<typeof ProjectFolderExportResult.Type, ProjectFolderTransferError>;
     readonly importFolder: (
       input: typeof ProjectFolderImportInput.Type,
-    ) => Effect.Effect<{ transferId: string }, ProjectFolderTransferError>;
+    ) => Effect.Effect<typeof ProjectFolderImportResult.Type, ProjectFolderTransferError>;
     readonly read: (
       input: typeof ProjectFolderReadInput.Type,
     ) => Effect.Effect<{ contents: string }, ProjectFolderTransferError>;
@@ -305,6 +307,7 @@ const make = Effect.gen(function* () {
         entries,
         entriesByPath: new Map(entries.map((entry) => [entry.path, entry])),
         offsets: new Map(),
+        pendingOffsets: new Map(),
         modified,
         touchedAt: clock.currentTimeMillisUnsafe(),
       });
@@ -350,6 +353,7 @@ const make = Effect.gen(function* () {
         entriesByPath: new Map(input.entries.map((entry) => [entry.path, entry])),
         ...(input.previousEntries === undefined ? {} : { previousEntries: input.previousEntries }),
         offsets: new Map(),
+        pendingOffsets: new Map(),
         modified: new Map(),
         touchedAt: clock.currentTimeMillisUnsafe(),
       });
@@ -380,7 +384,7 @@ const make = Effect.gen(function* () {
         await remove(transferId, sessions.get(transferId)!);
         throw cause;
       }
-      return { transferId };
+      return { transferId, parallelChunks: true };
     });
   });
 
@@ -426,18 +430,45 @@ const make = Effect.gen(function* () {
           const entry = transfer.entriesByPath.get(input.relativePath);
           const buffer = Buffer.from(input.contents, "base64");
           const offset = transfer.offsets.get(input.relativePath) ?? 0;
+          const pending = transfer.pendingOffsets.get(input.relativePath) ?? new Set<number>();
           if (
             !entry ||
             entry.kind !== "file" ||
-            input.offset !== offset ||
+            input.offset < offset ||
+            input.offset % PROJECT_FOLDER_CHUNK_BYTES !== 0 ||
+            pending.has(input.offset) ||
             buffer.length === 0 ||
-            buffer.length > PROJECT_FOLDER_CHUNK_BYTES ||
-            offset + buffer.length > entry.byteLength ||
+            buffer.length !==
+              Math.min(PROJECT_FOLDER_CHUNK_BYTES, entry.byteLength - input.offset) ||
             buffer.toString("base64") !== input.contents
           )
             return fail("invalid_chunk");
-          await NodeFSP.appendFile(path.join(transfer.root, entry.path), buffer);
-          transfer.offsets.set(entry.path, offset + buffer.length);
+          const handle = await NodeFSP.open(
+            path.join(transfer.root, entry.path),
+            NodeFS.constants.O_WRONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
+          );
+          try {
+            let written = 0;
+            while (written < buffer.length) {
+              const { bytesWritten } = await handle.write(
+                buffer,
+                written,
+                buffer.length - written,
+                input.offset + written,
+              );
+              if (bytesWritten === 0) fail("io");
+              written += bytesWritten;
+            }
+          } finally {
+            await handle.close();
+          }
+          pending.add(input.offset);
+          let next = offset;
+          while (pending.delete(next))
+            next += Math.min(PROJECT_FOLDER_CHUNK_BYTES, entry.byteLength - next);
+          transfer.offsets.set(entry.path, next);
+          if (pending.size > 0) transfer.pendingOffsets.set(entry.path, pending);
+          else transfer.pendingOffsets.delete(entry.path);
         }),
       ),
   );

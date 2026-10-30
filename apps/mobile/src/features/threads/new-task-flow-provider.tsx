@@ -71,6 +71,7 @@ import {
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import { findFolderSyncProject } from "@t3tools/client-runtime/operations/project-folder";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -330,6 +331,17 @@ export function NewTaskFlowProvider(
   const projectDefaults = useNewTaskProjectDefaults(selectedProject);
   const selectedEnvironmentServerConfig = projectDefaults.serverConfig;
   const isScratchDraft = projectDefaults.isScratch;
+  const folderSync = useEnvironmentQuery(
+    selectedProject &&
+      !isScratchDraft &&
+      selectedEnvironmentServerConfig?.environment.capabilities.projectFolderTransfer
+      ? projectEnvironment.folderSyncGet({
+          environmentId: selectedProject.environmentId,
+          input: { cwd: selectedProject.workspaceRoot },
+        })
+      : null,
+  );
+  const syncedProject = findFolderSyncProject(projects, folderSync.data);
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const scratchEnvironments = connectedEnvironments.filter(
@@ -359,6 +371,7 @@ export function NewTaskFlowProvider(
       readonly environmentLabel: string;
     }> = [];
     const hostsSelectedRepository = (project: EnvironmentProject) => {
+      if (project === syncedProject) return true;
       if (selectedRepositoryKey === null && selectedWorkspaceBasename === null) {
         return true;
       }
@@ -641,10 +654,13 @@ export function NewTaskFlowProvider(
   };
 
   const selectEnvironment = (environmentId: EnvironmentId) => {
-    const match = resolveEnvironmentProjectMatch(
-      projects.filter((project) => project.environmentId === environmentId),
-      selectedProject,
-    );
+    const match =
+      syncedProject?.environmentId === environmentId
+        ? syncedProject
+        : resolveEnvironmentProjectMatch(
+            projects.filter((project) => project.environmentId === environmentId),
+            selectedProject,
+          );
     updateFlow({
       draftKey: match ? carryDraftContentTo(match) : readFlow().draftKey,
       environmentId,

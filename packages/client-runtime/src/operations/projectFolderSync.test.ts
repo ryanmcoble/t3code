@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { ProjectFolderEntry } from "@t3tools/contracts";
+import { EnvironmentId, type ProjectFolderEntry } from "@t3tools/contracts";
 
-import { planFolderSync } from "./projectFolderSync.ts";
+import { findFolderSyncProject, planFolderSync } from "./projectFolderSync.ts";
 
 const file = (path: string, hash: string): ProjectFolderEntry => ({
   path,
@@ -12,6 +12,21 @@ const file = (path: string, hash: string): ProjectFolderEntry => ({
 });
 
 describe("planFolderSync", () => {
+  it("identifies a synced project by its machine and exact folder instead of its title", () => {
+    const projects = [
+      { environmentId: EnvironmentId.make("other"), workspaceRoot: "/remote/Crypto" },
+      { environmentId: EnvironmentId.make("peer"), workspaceRoot: "/unrelated/Crypto" },
+      { environmentId: EnvironmentId.make("peer"), workspaceRoot: "/remote/Crypto/" },
+    ];
+    expect(
+      findFolderSyncProject(projects, {
+        peerEnvironmentId: EnvironmentId.make("peer"),
+        peerPath: "/remote/Crypto",
+        baseline: [],
+      }),
+    ).toBe(projects[2]);
+    expect(findFolderSyncProject(projects, null)).toBeUndefined();
+  });
   it("merges independent edits and propagates deletions in either direction", () => {
     const a = file("a", "old");
     const b = file("b", "old");

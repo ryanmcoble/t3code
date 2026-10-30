@@ -177,6 +177,7 @@ import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { GuestPendingMessages } from "./chat/GuestShareControls";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
+import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
 import { ComposerContextPermissions } from "./ComposerContextPermissions";
 import { resolveCompatibleRuntimeMode } from "./chat/runtimeModeConfig";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
@@ -1236,6 +1237,14 @@ export default function ChatView(props: ChatViewProps) {
   // messages, so it would otherwise be offered a machine picker that does nothing.
   const canChangeEnvironment =
     hasMultipleEnvironments && !envLocked && draftId !== null && !draftThread?.promotedTo;
+  const canContinueOnEnvironment = Boolean(
+    hasMultipleEnvironments &&
+    isServerThread &&
+    activeThreadRef &&
+    activeProjectRef &&
+    !activeProject?.repositoryIdentity?.locator.remoteUrl &&
+    serverConfig?.environment.capabilities.projectFolderTransfer,
+  );
 
   const loadBalancingSettings = useClientSettings((settings) => ({
     loadBalancingEnabled: settings.loadBalancingEnabled,
@@ -1783,6 +1792,18 @@ export default function ChatView(props: ChatViewProps) {
     activeProjectIsScratch,
     projectGroupingSettings,
     sendInFlightRef,
+  });
+  const selectExecutionEnvironment = useStableCallback((nextEnvironmentId: EnvironmentId) => {
+    if (nextEnvironmentId === environmentId) return;
+    if (canChangeEnvironment) {
+      onEnvironmentChangeStable(nextEnvironmentId);
+    } else if (canContinueOnEnvironment && activeThreadRef && activeProjectRef) {
+      openAddProjectToMachine({
+        projectRef: activeProjectRef,
+        sourceThreadRef: activeThreadRef,
+        targetEnvironmentId: nextEnvironmentId,
+      });
+    }
   });
 
   const focusComposer = () => {
@@ -2677,14 +2698,14 @@ export default function ChatView(props: ChatViewProps) {
         openThreadFind(activeThreadKey);
       },
       "composer.cycleHost": ({ event }) => {
-        if (!canChangeEnvironment) return false;
+        if (!canChangeEnvironment && !canContinueOnEnvironment) return false;
         if (event.repeat) return;
         const currentId = readPendingEnvironmentChange()?.environmentId ?? environmentId;
         const index = logicalProjectEnvironments.findIndex(
           (env) => env.environmentId === currentId,
         );
         const next = logicalProjectEnvironments[(index + 1) % logicalProjectEnvironments.length];
-        if (next) onEnvironmentChangeStable(next.environmentId);
+        if (next) selectExecutionEnvironment(next.environmentId);
       },
       "thread.steerQueuedMessage": ({ event }) =>
         routeKind !== "draft" && queuedRunsControlRef.current?.steerNext(event.repeat) === true,
@@ -3662,8 +3683,8 @@ export default function ChatView(props: ChatViewProps) {
                                 {...(canCheckoutPullRequestIntoThread
                                   ? { onCheckoutPullRequestRequest: openPullRequestDialogStable }
                                   : {})}
-                                {...(canChangeEnvironment
-                                  ? { onEnvironmentChange: onEnvironmentChangeStable }
+                                {...(canChangeEnvironment || canContinueOnEnvironment
+                                  ? { onEnvironmentChange: selectExecutionEnvironment }
                                   : {})}
                                 autoEnvironmentLabel={autoEnvironmentLabel}
                                 onAutoEnvironment={
@@ -3767,7 +3788,9 @@ export default function ChatView(props: ChatViewProps) {
                   ? onAutoEnvironmentStable
                   : undefined
               }
-              {...(canChangeEnvironment ? { onEnvironmentChange: onEnvironmentChangeStable } : {})}
+              {...(canChangeEnvironment || canContinueOnEnvironment
+                ? { onEnvironmentChange: selectExecutionEnvironment }
+                : {})}
               onEnvModeChange={onEnvModeChangeStable}
               envMode={envMode}
               {...(canOverrideServerThreadEnvMode
