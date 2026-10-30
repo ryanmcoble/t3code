@@ -401,13 +401,9 @@ async function syncProjectFolderUnlocked<R, E>(
   )
     throw new Error("The other folder is no longer linked to this folder. No files were changed.");
   const peerBaseline = new Map(peerState.value.baseline.map((entry) => [entry.path, entry]));
-  if (
-    state.baseline.length !== peerBaseline.size ||
-    state.baseline.some((entry) => !folderEntryEqual(entry, peerBaseline.get(entry.path)))
-  )
-    throw new Error(
-      "The last sync did not finish saving its baseline on both machines. No files were changed. Unlink and copy again to establish a new baseline.",
-    );
+  const baselinesMatch =
+    state.baseline.length === peerBaseline.size &&
+    state.baseline.every((entry) => folderEntryEqual(entry, peerBaseline.get(entry.path)));
   const snapshots: Array<{
     environmentId: EnvironmentId;
     cwd: string;
@@ -430,6 +426,16 @@ async function syncProjectFolderUnlocked<R, E>(
     }
     const left = snapshots[0]!;
     const right = snapshots[1]!;
+    if (!baselinesMatch) {
+      const rightEntries = new Map(right.entries.map((entry) => [entry.path, entry]));
+      if (
+        left.entries.length !== rightEntries.size ||
+        left.entries.some((entry) => !folderEntryEqual(entry, rightEntries.get(entry.path)))
+      )
+        throw new Error(
+          "The previous sync was interrupted and the folders now differ. No files were changed. Resolve the differences on disk and try again.",
+        );
+    }
     const plan = planFolderSync(state.baseline, left.entries, right.entries);
     if (plan.conflicts.length)
       throw new Error(

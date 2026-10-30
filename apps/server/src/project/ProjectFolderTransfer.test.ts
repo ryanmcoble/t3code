@@ -510,6 +510,16 @@ describe("ProjectFolderTransfer", () => {
             "second version",
           );
         });
+        // A quit between the two baseline saves is recoverable when both folders already agree.
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(destination, "local"), "first version"),
+        );
+        const current = (yield* service.getSync(local))!;
+        yield* service.setSync({ cwd: source, state: { ...current, baseline: [] } });
+        yield* Effect.promise(() => syncProjectFolder(registry, commands, local, current));
+        expect((yield* service.getSync(local))!.baseline).toEqual(
+          (yield* service.getSync(remote))!.baseline,
+        );
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });
