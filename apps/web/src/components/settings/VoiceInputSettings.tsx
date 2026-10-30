@@ -3,6 +3,7 @@ import { useClientSettings, persistClientSettingsPatch } from "~/hooks/useSettin
 import { testVoiceInput } from "~/voice-input/transcriber";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
+import { Switch } from "../ui/switch";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -33,7 +34,7 @@ export function VoiceInputSettings() {
     <SettingsSection id="voice-input" title="Voice input">
       <SettingsRow
         {...searchableSetting("voice-input-engine")}
-        description="Record into your draft, review the text, then send. These settings apply to this client, including when connected to another machine."
+        description="Dictate into the composer. These settings apply to this client, including when connected to another machine."
         control={
           <Select
             value={settings.engine}
@@ -63,6 +64,17 @@ export function VoiceInputSettings() {
       />
       {settings.engine !== "off" ? (
         <>
+          <SettingsRow
+            {...searchableSetting("voice-input-send-on-enter")}
+            description="Press Enter in the composer while recording to transcribe and send. Turn off to leave the text in your draft. The stop button always leaves the text for review."
+            control={
+              <Switch
+                checked={settings.sendOnEnter}
+                onCheckedChange={(checked) => update({ sendOnEnter: checked })}
+                aria-label="Send dictation on Enter"
+              />
+            }
+          />
           <SettingsRow
             title="Language"
             description="Leave blank to use the device language for Apple transcription, or automatic language detection on a custom server."

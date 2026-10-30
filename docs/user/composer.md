@@ -176,9 +176,12 @@ and use **Attach again** or remove the missing file before sending.
 
 ## Voice input on desktop and web
 
-Use the microphone in the composer to record, then finish to transcribe into your
-draft. Review and edit the text before sending. Cancel discards the recording and
-keeps your draft. The editor and send action pause while dictation is running.
+Use the microphone in the composer to record. Press **Enter** with the composer
+focused to finish transcription and send the message. **Send dictation on Enter**
+is on by default in **Settings → Chat → Voice input**; turn it off to leave the
+transcript in your draft instead. The stop button always transcribes into the draft
+for review. Cancel discards the recording and keeps your draft. Editing pauses
+while dictation is running.
 
 In **Settings → Chat → Voice input**, choose Apple transcription, a custom server,
 or Off. These settings belong to the client: native transcription uses the Mac

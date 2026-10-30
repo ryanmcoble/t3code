@@ -1020,6 +1020,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [hasWrappedPrompt, observeWrappedPrompt] = useComposerMultilinePrompt();
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
+  const composerFormRef = useRef<HTMLFormElement>(null);
   const voiceInput = useVoiceInput({
     ownerKey: composerDraftTargetKey,
     disabled:
@@ -1058,6 +1059,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerTrigger(detectComposerTrigger(text, selection.end));
       composerEditorRef.current?.focusAt(cursor);
     },
+    submitDraft: () => composerFormRef.current?.requestSubmit(),
   });
   const pasteAsTextShortcutUntilRef = useRef(0);
   // A pending question stays expanded: its card moves into the banner dock,
@@ -1069,7 +1071,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     !hasMultilinePrompt &&
     !voiceInput.busy &&
     pendingUserInputs.length === 0;
-  const composerFormRef = useRef<HTMLFormElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const providerInputRejectedRef = useRef(false);
   const composerSelectLockRef = useRef(false);
@@ -3131,6 +3132,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   return (
     <form
       ref={composerFormRef}
+      onKeyDownCapture={voiceInput.onKeyDownCapture}
       onSubmit={submitComposerStable}
       onFocusCapture={(event) => {
         const activeElement = event.target;

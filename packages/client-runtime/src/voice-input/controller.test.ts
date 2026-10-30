@@ -140,7 +140,7 @@ describe("VoiceInputController", () => {
             },
       );
       await harness.controller.start();
-      await harness.controller.stop();
+      expect(await harness.controller.stop()).toBeNull();
       expect(harness.controller.currentState).toMatchObject({
         phase: "error",
         error: expect.any(String),
@@ -199,12 +199,12 @@ describe("VoiceInputController", () => {
       preparation.resolve(undefined);
       await starting;
       if (changeDuring === "recording") selected = second;
-      await harness.controller.stop();
+      expect(await harness.controller.stop()).toBe("hello first choice");
 
       expect(harness.commits.map((commit) => commit.text)).toEqual(["hello first choice"]);
 
       await harness.controller.start();
-      await harness.controller.stop();
+      expect(await harness.controller.stop()).toBe("hello second choice");
 
       expect(harness.commits.map((commit) => commit.text)).toEqual([
         "hello first choice",
@@ -232,7 +232,7 @@ describe("VoiceInputController", () => {
       error: null,
       url: "file:///voice.m4a",
     });
-    await stopping;
+    expect(await stopping).toBe("hello new text");
 
     expect(harness.commits).toEqual([
       { text: "hello new text", selection: { start: 14, end: 14 } },
@@ -290,7 +290,7 @@ describe("VoiceInputController", () => {
       expect(prepare).not.toHaveBeenCalled();
       expect(next.recorder.prepareToRecordAsync).not.toHaveBeenCalled();
       audioRelease.resolve(undefined);
-      await stopping;
+      expect(await stopping).toBeNull();
       await nextStart;
 
       expect(harness.commits).toEqual([]);
@@ -340,7 +340,7 @@ describe("VoiceInputController", () => {
     await transcriptionEntered.promise;
     harness.setDraft(draft({ ownerKey: "environment:other-thread" }));
     transcription.resolve("late text");
-    await stopping;
+    expect(await stopping).toBeNull();
 
     expect(harness.commits).toEqual([]);
     expect(harness.controller.currentState.error).toContain("draft changed");

@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 
 export const VoiceInputSettings = Schema.Struct({
   engine: Schema.Literals(["native", "server", "off"]),
@@ -6,6 +7,7 @@ export const VoiceInputSettings = Schema.Struct({
   serverUrl: Schema.String,
   model: Schema.String,
   apiKey: Schema.String,
+  sendOnEnter: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type VoiceInputSettings = typeof VoiceInputSettings.Type;
 
@@ -15,6 +17,7 @@ export const DEFAULT_VOICE_INPUT_SETTINGS: VoiceInputSettings = {
   serverUrl: "",
   model: "",
   apiKey: "",
+  sendOnEnter: true,
 };
 
 export const DesktopVoiceInputRequest = Schema.Struct({

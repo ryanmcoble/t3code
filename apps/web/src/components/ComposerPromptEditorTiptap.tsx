@@ -1080,6 +1080,7 @@ function ComposerPromptEditorTiptapInner(
     "data-testid": "composer-editor",
     "data-composer-rich-text": richText ? "true" : "false",
     role: "textbox",
+    tabindex: "0",
     "aria-multiline": "true",
     ...(ariaLabel ? { "aria-label": ariaLabel } : {}),
     ...(disabled ? { "aria-readonly": "true" } : {}),

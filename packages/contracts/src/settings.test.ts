@@ -291,6 +291,32 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+describe("ClientSettings voice input", () => {
+  it("enables Enter-to-send for older settings and preserves an explicit opt-out", () => {
+    const legacyVoice = {
+      engine: "server",
+      language: "en-US",
+      serverUrl: "http://localhost:8000/v1",
+      model: "speech",
+      apiKey: "",
+    };
+    expect(decodeClientSettings({}).voiceInput.sendOnEnter).toBe(true);
+    expect(decodeClientSettings({ voiceInput: legacyVoice }).voiceInput).toMatchObject({
+      ...legacyVoice,
+      sendOnEnter: true,
+    });
+    expect(
+      decodeClientSettings({ voiceInput: { ...legacyVoice, sendOnEnter: false } }).voiceInput
+        .sendOnEnter,
+    ).toBe(false);
+    expect(
+      encodeClientSettings(
+        decodeClientSettings({ voiceInput: { ...legacyVoice, sendOnEnter: false } }),
+      ).voiceInput?.sendOnEnter,
+    ).toBe(false);
+  });
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],

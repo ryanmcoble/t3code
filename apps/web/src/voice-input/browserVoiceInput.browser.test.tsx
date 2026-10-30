@@ -1,42 +1,49 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { encodeVoiceWav } from "@t3tools/client-runtime/voice-input";
 import { render } from "../../test/render";
 import { ComposerVoiceInput } from "../components/chat/ComposerVoiceInput";
 import { BackgroundThreadContext } from "../components/chat/backgroundThread";
 import { useVoiceInput } from "./useVoiceInput";
+import { userEvent } from "vite-plus/test/browser";
+import {
+  ComposerPromptEditorTiptap,
+  type ComposerPromptEditorHandle,
+} from "../components/ComposerPromptEditorTiptap";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { __setClientSettingsForTests } from "../hooks/useSettings";
 
-vi.mock("~/hooks/useSettings", () => ({
-  useClientSettings: (
-    select: (settings: {
-      voiceInput: {
-        engine: string;
-        language: string;
-        serverUrl: string;
-        model: string;
-        apiKey: string;
-      };
-    }) => unknown,
-  ) =>
-    select({
-      voiceInput: {
-        engine: "server",
-        language: "",
-        serverUrl: "http://speech.test/v1",
-        model: "local-speech-model",
-        apiKey: "",
-      },
-    }),
-}));
+function setup(sendOnEnter = true) {
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    voiceInput: {
+      ...DEFAULT_CLIENT_SETTINGS.voiceInput,
+      engine: "server",
+      serverUrl: "http://speech.test/v1",
+      model: "local-speech-model",
+      sendOnEnter,
+    },
+  });
+}
 
-function ComposerHarness() {
+function ComposerHarness({
+  realEditor = false,
+  ownerKey = "remote-environment:existing-thread",
+}: {
+  readonly realEditor?: boolean;
+  readonly ownerKey?: string;
+}) {
   const [text, setText] = useState("before after");
   const [submitted, setSubmitted] = useState(false);
+  const [sentText, setSentText] = useState("");
+  const [sendCount, setSendCount] = useState(0);
+  const form = useRef<HTMLFormElement>(null);
+  const editor = useRef<ComposerPromptEditorHandle>(null);
   const voice = useVoiceInput({
-    ownerKey: "remote-environment:existing-thread",
+    ownerKey,
     disabled: false,
     readDraft: () => ({
-      ownerKey: "remote-environment:existing-thread",
+      ownerKey,
       text,
       selection: { start: 7, end: 7 },
       revision: 0,
@@ -45,21 +52,43 @@ function ComposerHarness() {
     commitDraft: (value) => {
       setText(value);
     },
+    submitDraft: () => form.current?.requestSubmit(),
   });
   return (
     <form
+      ref={form}
       data-chat-composer-form="true"
+      onKeyDownCapture={voice.onKeyDownCapture}
       onSubmit={(event) => {
         event.preventDefault();
+        if (voice.busy) return;
         setSubmitted(true);
+        setSentText(text);
+        setSendCount((count) => count + 1);
       }}
     >
-      <textarea
-        aria-label="Message"
-        readOnly={voice.busy}
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-      />
+      {realEditor ? (
+        <ComposerPromptEditorTiptap
+          editorRef={editor}
+          value={text}
+          cursor={7}
+          contextRecords={new Map()}
+          skills={[]}
+          disabled={voice.busy}
+          placeholder="Message"
+          ariaLabel="Message"
+          onChange={setText}
+          onPaste={() => {}}
+        />
+      ) : (
+        <textarea
+          aria-label="Message"
+          data-testid="composer-editor"
+          readOnly={voice.busy}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+        />
+      )}
       <ComposerVoiceInput
         state={voice.state}
         disabled={false}
@@ -71,6 +100,8 @@ function ComposerHarness() {
       </button>
       {voice.state.error ? <span role="alert">{voice.state.error}</span> : null}
       {submitted ? <span>Submitted</span> : null}
+      <output aria-label="Sent message">{sentText}</output>
+      <output aria-label="Send count">{sendCount}</output>
     </form>
   );
 }
@@ -120,6 +151,7 @@ function recorderFixture() {
 }
 
 it("records on the client, transcribes WAV through the chosen server and leaves the result in an editable draft", async () => {
+  setup();
   using recorder = recorderFixture();
   await using screen = await render(<ComposerHarness />);
   using _permission = vi
@@ -159,6 +191,7 @@ it("records on the client, transcribes WAV through the chosen server and leaves 
 it.each(["unmounted", "background"] as const)(
   "releases a microphone granted after the composer becomes %s",
   async (destination) => {
+    setup();
     using recorder = recorderFixture();
     await using screen = await render(
       <BackgroundThreadContext value={false}>
@@ -187,7 +220,73 @@ it.each(["unmounted", "background"] as const)(
   },
 );
 
+it.each(["empty", "error", "cancel", "owner-change", "background"] as const)(
+  "does not send a pending Enter submission after %s",
+  async (outcome) => {
+    setup();
+    using recorder = recorderFixture();
+    await using screen = await render(
+      <BackgroundThreadContext value={false}>
+        <ComposerHarness />
+      </BackgroundThreadContext>,
+    );
+    using _permission = vi
+      .spyOn(navigator.permissions, "query")
+      .mockResolvedValue({ state: "granted" } as PermissionStatus);
+    using _microphone = vi
+      .spyOn(navigator.mediaDevices, "getUserMedia")
+      .mockResolvedValue(recorder.stream);
+    using revoke = vi.spyOn(URL, "revokeObjectURL");
+    let respond!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => {
+      respond = resolve;
+    });
+    let entered!: () => void;
+    const requestEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const originalFetch = window.fetch.bind(window);
+    using _fetch = vi.spyOn(window, "fetch").mockImplementation((url, options) => {
+      if (String(url).startsWith("blob:")) return originalFetch(url, options);
+      entered();
+      return response;
+    });
+    await screen.getByRole("textbox", { name: "Message" }).click();
+    await screen.getByRole("button", { name: "Start dictation" }).click();
+    await expect.element(screen.getByRole("button", { name: "Finish dictation" })).toBeVisible();
+    await userEvent.keyboard("{Enter}{Enter}");
+    await requestEntered;
+    await expect.element(screen.getByText("Submitted", { exact: true })).not.toBeInTheDocument();
+    if (outcome === "cancel")
+      await screen.getByRole("button", { name: "Cancel dictation" }).click();
+    if (outcome === "owner-change")
+      await screen.rerender(
+        <BackgroundThreadContext value={false}>
+          <ComposerHarness ownerKey="another-thread" />
+        </BackgroundThreadContext>,
+      );
+    if (outcome === "background")
+      await screen.rerender(
+        <BackgroundThreadContext value={true}>
+          <ComposerHarness />
+        </BackgroundThreadContext>,
+      );
+    respond(
+      outcome === "error"
+        ? new Response("Unavailable", { status: 503 })
+        : Response.json({ text: outcome === "empty" ? " " : "late transcript" }),
+    );
+    await vi.waitFor(() => expect(revoke).toHaveBeenCalledTimes(1));
+    await expect.element(screen.getByRole("status", { name: "Send count" })).toHaveTextContent("0");
+    await expect
+      .element(screen.getByRole("textbox", { name: "Message" }))
+      .toHaveValue("before after");
+    expect(recorder.stop).toHaveBeenCalledTimes(1);
+  },
+);
+
 it("discards late audio from a recorder failure and preserves the existing draft", async () => {
+  setup();
   using recorder = recorderFixture();
   await using screen = await render(<ComposerHarness />);
   using _permission = vi
@@ -217,6 +316,7 @@ it.each([
   ],
   ["NotFoundError", "No microphone was found. Connect a microphone, then try again."],
 ])("explains a microphone %s error without changing the draft", async (name, message) => {
+  setup();
   using recorder = recorderFixture();
   await using screen = await render(<ComposerHarness />);
   using _permission = vi
@@ -232,3 +332,53 @@ it.each([
     .toHaveValue("before after");
   expect(recorder.stop).not.toHaveBeenCalled();
 });
+
+it.each([
+  { sendOnEnter: true, realEditor: false },
+  { sendOnEnter: false, realEditor: false },
+  { sendOnEnter: true, realEditor: true },
+])(
+  "Enter finishes dictation with $sendOnEnter and real editor $realEditor",
+  async ({ sendOnEnter, realEditor }) => {
+    setup(sendOnEnter);
+    using recorder = recorderFixture();
+    await using screen = await render(<ComposerHarness realEditor={realEditor} />);
+    using _permission = vi
+      .spyOn(navigator.permissions, "query")
+      .mockResolvedValue({ state: "granted" } as PermissionStatus);
+    using _microphone = vi
+      .spyOn(navigator.mediaDevices, "getUserMedia")
+      .mockResolvedValue(recorder.stream);
+    const originalFetch = window.fetch.bind(window);
+    using _fetch = vi.spyOn(window, "fetch").mockImplementation(async (url) => {
+      if (String(url).startsWith("blob:")) return originalFetch(url);
+      return Response.json({ text: "spoken text" });
+    });
+    await screen.getByRole("textbox", { name: "Message" }).click();
+    await screen.getByRole("button", { name: "Start dictation" }).click();
+    await expect.element(screen.getByRole("button", { name: "Finish dictation" })).toBeVisible();
+    await expect.element(screen.getByRole("textbox", { name: "Message" })).toHaveFocus();
+    await userEvent.keyboard("{Shift>}{Enter}{/Shift}");
+    await expect.element(screen.getByRole("button", { name: "Finish dictation" })).toBeVisible();
+    await userEvent.keyboard("{Enter}");
+    if (realEditor)
+      await expect
+        .element(screen.getByRole("textbox", { name: "Message" }))
+        .toHaveTextContent("before spoken text after");
+    else
+      await expect
+        .element(screen.getByRole("textbox", { name: "Message" }))
+        .toHaveValue("before spoken text after");
+    if (sendOnEnter) {
+      await expect
+        .element(screen.getByRole("status", { name: "Sent message" }))
+        .toHaveTextContent("before spoken text after");
+      await expect
+        .element(screen.getByRole("status", { name: "Send count" }))
+        .toHaveTextContent("1");
+    } else {
+      await expect.element(screen.getByText("Submitted", { exact: true })).not.toBeInTheDocument();
+    }
+    expect(recorder.stop).toHaveBeenCalledTimes(1);
+  },
+);

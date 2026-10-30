@@ -1,4 +1,5 @@
-import { use, useEffect, useState, useSyncExternalStore } from "react";
+import { use, useEffect, useState, useSyncExternalStore, type KeyboardEvent } from "react";
+import { flushSync } from "react-dom";
 import {
   voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,
@@ -19,6 +20,7 @@ export function useVoiceInput(input: {
     text: string,
     selection: { readonly start: number; readonly end: number },
   ) => void;
+  readonly submitDraft: () => void;
 }) {
   const settings = useClientSettings((value) => value.voiceInput);
   const background = use(BackgroundThreadContext);
@@ -26,6 +28,11 @@ export function useVoiceInput(input: {
   const readDraft = useStableCallback(input.readDraft);
   const commitDraft = useStableCallback(input.commitDraft);
   const subscribeDraftChanges = useStableCallback(input.subscribeDraftChanges);
+  const submitTranscript = useStableCallback((ownerKey: string, text: string) => {
+    if (background || input.disabled || input.ownerKey !== ownerKey) return;
+    const current = readDraft();
+    if (current?.ownerKey === ownerKey && current.text === text) input.submitDraft();
+  });
   const [session] = useState(() =>
     createBrowserVoiceInput({ getTranscriber, readDraft, commitDraft }),
   );
@@ -38,6 +45,33 @@ export function useVoiceInput(input: {
     Boolean(navigator.mediaDevices?.getUserMedia) &&
     (settings.engine === "server" || window.desktopBridge?.getClientPlatform() === "darwin");
   const busy = voiceInputBlocksSubmission(state);
+  const finishFromEnter = useStableCallback(async () => {
+    const ownerKey = input.ownerKey;
+    const send = settings.sendOnEnter;
+    const text = await session.controller.stop();
+    if (text === null || !send) return;
+    // Submission must see the committed transcript and the idle controller in the same render.
+    flushSync(() => {});
+    if (session.getSnapshot().phase === "idle") submitTranscript(ownerKey, text);
+  });
+  const onKeyDownCapture = useStableCallback((event: KeyboardEvent) => {
+    if (
+      event.key !== "Enter" ||
+      event.shiftKey ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.nativeEvent.isComposing ||
+      event.keyCode === 229 ||
+      !(event.target instanceof Element) ||
+      !event.target.closest('[data-testid="composer-editor"]') ||
+      !voiceInputBlocksSubmission(session.getSnapshot())
+    )
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat && session.getSnapshot().phase === "recording") void finishFromEnter();
+  });
   const toggle = useStableCallback(() => {
     if (state.phase === "recording") {
       void session.controller.stop();
@@ -86,5 +120,12 @@ export function useVoiceInput(input: {
     if (!available || input.disabled) return;
     return registerMenuAction("composer.dictation", toggle);
   }, [available, input.disabled, toggle]);
-  return { state, available, busy, toggle, cancel: () => session.controller.cancel() };
+  return {
+    state,
+    available,
+    busy,
+    toggle,
+    onKeyDownCapture,
+    cancel: () => session.controller.cancel(),
+  };
 }

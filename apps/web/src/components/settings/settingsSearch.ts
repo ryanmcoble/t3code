@@ -593,6 +593,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "voice-input-send-on-enter",
+    title: "Send dictation on Enter",
+    to: "/settings/chat",
+    searchTerms: ["voice transcription microphone speech enter return send dictation automatic"],
+  },
+  {
     id: "follow-up-behavior",
     title: "Follow-up behavior",
     to: "/settings/chat",
