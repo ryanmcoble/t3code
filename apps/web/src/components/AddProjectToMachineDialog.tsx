@@ -531,8 +531,8 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
             ) : null}
             {isFolder ? (
               <p className="text-muted-foreground text-xs">
-                Includes hidden and binary files, including secrets stored in this folder. Up to 1
-                GiB and 10,000 entries. Links must stay inside the folder.
+                Includes hidden and binary files, including secrets stored in this folder. Links
+                must stay inside the folder.
               </p>
             ) : null}
             {progress ? (

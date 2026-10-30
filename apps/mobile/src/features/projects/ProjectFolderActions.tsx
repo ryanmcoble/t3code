@@ -260,8 +260,8 @@ export function ProjectFolderActions(props: {
             </View>
           ) : null}
           <Text className="text-sm text-foreground-muted">
-            Copies all files, including hidden files and secrets. Up to 1 GiB and 10,000 entries.
-            The original stays here. Copies sync only when you click Sync.
+            Copies all files, including hidden files and secrets. The original stays here. Copies
+            sync only when you click Sync.
           </Text>
           <Button
             label={props.sourceThreadRef ? "Copy folder and continue thread" : "Copy folder"}

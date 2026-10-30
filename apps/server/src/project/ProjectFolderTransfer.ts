@@ -5,8 +5,6 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   PROJECT_FOLDER_CHUNK_BYTES,
-  PROJECT_FOLDER_MAX_BYTES,
-  PROJECT_FOLDER_MAX_ENTRIES,
   ProjectFolderTransferError,
   ProjectFolderSyncState,
   type ProjectFolderEntry,
@@ -34,6 +32,7 @@ interface Transfer {
   readonly root: string;
   readonly destination: string | null;
   readonly entries: ReadonlyArray<ProjectFolderEntry>;
+  readonly entriesByPath: ReadonlyMap<string, ProjectFolderEntry>;
   readonly offsets: Map<string, number>;
   readonly modified: Map<string, number>;
   readonly previousEntries?: ReadonlyArray<ProjectFolderEntry>;
@@ -102,7 +101,6 @@ const make = Effect.gen(function* () {
   };
   const validate = (entries: ReadonlyArray<ProjectFolderEntry>) => {
     const seen = new Map<string, ProjectFolderEntry>();
-    let bytes = 0;
     for (const entry of entries) {
       // Use portable names, including when the sender and recipient use different operating systems.
       if (
@@ -120,7 +118,6 @@ const make = Effect.gen(function* () {
         fail("invalid_path");
       if (seen.has(entry.path.toLowerCase())) fail("invalid_path");
       seen.set(entry.path.toLowerCase(), entry);
-      bytes += entry.byteLength;
       if (entry.kind === "symlink") {
         const target = entry.linkTarget;
         if (
@@ -134,8 +131,6 @@ const make = Effect.gen(function* () {
           fail("unsupported_entry");
       }
     }
-    if (entries.length > PROJECT_FOLDER_MAX_ENTRIES || bytes > PROJECT_FOLDER_MAX_BYTES)
-      fail("too_large");
     for (const entry of entries) {
       for (
         let parent = entry.path.split("/").slice(0, -1).join("/") || ".";
@@ -180,7 +175,6 @@ const make = Effect.gen(function* () {
     root = await NodeFSP.realpath(root);
     const entries: ProjectFolderEntry[] = [];
     const modified = new Map<string, number>();
-    let bytes = 0;
     const walk = async (directory: string) => {
       for (const name of await NodeFSP.readdir(path.join(root, directory))) {
         const relative = directory ? `${directory}/${name}` : name;
@@ -213,7 +207,6 @@ const make = Effect.gen(function* () {
         const linkTarget = kind === "symlink" ? await NodeFSP.readlink(absolute) : undefined;
         if (kind === "symlink" && !inside(root, await NodeFSP.realpath(absolute)))
           fail("unsupported_entry");
-        bytes += kind === "file" ? stat.size : 0;
         entries.push({
           path: relative,
           kind,
@@ -222,8 +215,6 @@ const make = Effect.gen(function* () {
           ...(hash === undefined ? {} : { hash }),
           ...(linkTarget === undefined ? {} : { linkTarget }),
         });
-        if (entries.length > PROJECT_FOLDER_MAX_ENTRIES || bytes > PROJECT_FOLDER_MAX_BYTES)
-          fail("too_large");
         modified.set(relative, stat.mtimeMs);
         if (kind === "directory") await walk(relative);
       }
@@ -312,6 +303,7 @@ const make = Effect.gen(function* () {
         root,
         destination: null,
         entries,
+        entriesByPath: new Map(entries.map((entry) => [entry.path, entry])),
         offsets: new Map(),
         modified,
         touchedAt: clock.currentTimeMillisUnsafe(),
@@ -355,20 +347,22 @@ const make = Effect.gen(function* () {
         root,
         destination,
         entries: input.entries,
+        entriesByPath: new Map(input.entries.map((entry) => [entry.path, entry])),
         ...(input.previousEntries === undefined ? {} : { previousEntries: input.previousEntries }),
         offsets: new Map(),
         modified: new Map(),
         touchedAt: clock.currentTimeMillisUnsafe(),
       });
+      const previousEntriesByPath = new Map(
+        input.previousEntries?.map((entry) => [entry.path, entry]),
+      );
       try {
         for (const entry of input.entries
           .filter((entry) => entry.kind === "directory")
           .toSorted((a, b) => a.path.length - b.path.length))
           await NodeFSP.mkdir(path.join(root, entry.path), { recursive: true });
         for (const entry of input.entries.filter((entry) => entry.kind === "file")) {
-          const previous = input.previousEntries?.find(
-            (candidate) => candidate.path === entry.path,
-          );
+          const previous = previousEntriesByPath.get(entry.path);
           if (entry.hash && previous?.kind === "file" && previous.hash === entry.hash) {
             await NodeFSP.copyFile(
               path.join(destination, entry.path),
@@ -394,10 +388,9 @@ const make = Effect.gen(function* () {
     (input) =>
       io(async () => {
         const transfer = session(input.transferId, "export");
-        const entry = transfer.entries.find(
-          (entry) => entry.path === input.relativePath && entry.kind === "file",
-        );
-        if (!entry || input.offset > entry.byteLength) return fail("invalid_chunk");
+        const entry = transfer.entriesByPath.get(input.relativePath);
+        if (!entry || entry.kind !== "file" || input.offset > entry.byteLength)
+          return fail("invalid_chunk");
         const absolute = path.join(transfer.root, input.relativePath);
         if (!inside(transfer.root, await NodeFSP.realpath(absolute))) fail("source_changed");
         const handle = await NodeFSP.open(
@@ -430,13 +423,12 @@ const make = Effect.gen(function* () {
         input.transferId,
         io(async () => {
           const transfer = session(input.transferId, "import");
-          const entry = transfer.entries.find(
-            (entry) => entry.path === input.relativePath && entry.kind === "file",
-          );
+          const entry = transfer.entriesByPath.get(input.relativePath);
           const buffer = Buffer.from(input.contents, "base64");
           const offset = transfer.offsets.get(input.relativePath) ?? 0;
           if (
             !entry ||
+            entry.kind !== "file" ||
             input.offset !== offset ||
             buffer.length === 0 ||
             buffer.length > PROJECT_FOLDER_CHUNK_BYTES ||
@@ -467,12 +459,10 @@ const make = Effect.gen(function* () {
           else if (entry.kind === "file") await NodeFSP.chmod(absolute, entry.mode & 0o777);
         }
         const staged = await scan(transfer.root);
+        const stagedEntriesByPath = new Map(staged.entries.map((entry) => [entry.path, entry]));
         const expectedFiles = transfer.entries.filter((entry) => entry.kind === "file");
         for (const entry of expectedFiles) {
-          if (
-            entry.hash &&
-            staged.entries.find((candidate) => candidate.path === entry.path)?.hash !== entry.hash
-          )
+          if (entry.hash && stagedEntriesByPath.get(entry.path)?.hash !== entry.hash)
             fail("invalid_chunk");
         }
         for (const entry of transfer.entries

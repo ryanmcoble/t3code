@@ -3,8 +3,6 @@ import * as Schema from "effect/Schema";
 import { EnvironmentId, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const PROJECT_FOLDER_CHUNK_BYTES = 192 * 1024;
-export const PROJECT_FOLDER_MAX_BYTES = 1024 * 1024 * 1024;
-export const PROJECT_FOLDER_MAX_ENTRIES = 10_000;
 
 export const ProjectFolderEntry = Schema.Struct({
   path: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
@@ -16,9 +14,7 @@ export const ProjectFolderEntry = Schema.Struct({
 });
 export type ProjectFolderEntry = typeof ProjectFolderEntry.Type;
 
-export const ProjectFolderEntries = Schema.Array(ProjectFolderEntry).check(
-  Schema.isMaxLength(PROJECT_FOLDER_MAX_ENTRIES),
-);
+export const ProjectFolderEntries = Schema.Array(ProjectFolderEntry);
 export const ProjectFolderSessionInput = Schema.Struct({ transferId: TrimmedNonEmptyString });
 export const ProjectFolderExportInput = Schema.Struct({ cwd: TrimmedNonEmptyString });
 export const ProjectFolderExportResult = Schema.Struct({
@@ -52,7 +48,6 @@ export class ProjectFolderTransferError extends Schema.TaggedError<ProjectFolder
     reason: Schema.Literals([
       "invalid_path",
       "unsupported_entry",
-      "too_large",
       "source_changed",
       "destination_exists",
       "invalid_session",
@@ -69,8 +64,6 @@ export class ProjectFolderTransferError extends Schema.TaggedError<ProjectFolder
         return "A folder entry points outside the copied folder or has an unsupported name.";
       case "unsupported_entry":
         return "The folder contains a special file or a link outside the folder. Remove it before copying.";
-      case "too_large":
-        return "Folder copies support up to 10,000 entries and 1 GiB. No files were skipped.";
       case "source_changed":
         return "The source folder changed during the copy. Stop work in it and try again.";
       case "destination_exists":

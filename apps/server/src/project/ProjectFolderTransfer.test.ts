@@ -15,17 +15,20 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  ProjectFolderImportInput,
   PROJECT_FOLDER_CHUNK_BYTES,
-  PROJECT_FOLDER_MAX_BYTES,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
 import * as ProjectFolderTransfer from "./ProjectFolderTransfer.ts";
+
+const decodeFolderImport = Schema.decodeUnknownSync(ProjectFolderImportInput);
 
 const layer = ProjectFolderTransfer.layer.pipe(
   Layer.provide(Layer.mock(KnownWorkspaces.KnownWorkspaces)({ assertContains: () => Effect.void })),
@@ -128,32 +131,53 @@ describe("ProjectFolderTransfer", () => {
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect(
-    "rejects escaping paths, links, collisions and oversized manifests before creating a destination",
-    () =>
-      Effect.gen(function* () {
-        const { destination, service } = yield* fixture;
-        const file = { kind: "file" as const, mode: 0o644, byteLength: 0 };
-        for (const entries of [
-          [{ ...file, path: "../escape" }],
-          [{ ...file, path: "C:/escape" }],
-          [
-            { ...file, path: "a" },
-            { ...file, path: "A" },
-          ],
-          [{ ...file, path: "a/b" }],
-          [{ ...file, kind: "symlink" as const, path: "link", linkTarget: "../escape" }],
-          [{ ...file, path: "large", byteLength: PROJECT_FOLDER_MAX_BYTES + 1 }],
-        ])
-          expect(
-            (yield* service
-              .importFolder({ destinationPath: destination, entries })
-              .pipe(Effect.flip))._tag,
-          ).toBe("ProjectFolderTransferError");
-        expect(yield* Effect.promise(() => NodeFSP.readdir(NodePath.dirname(destination)))).toEqual(
-          ["source"],
-        );
-      }).pipe(Effect.scoped, Effect.provide(layer)),
+  it.effect("accepts transfers beyond the former size and entry-count caps", () =>
+    Effect.gen(function* () {
+      const { source, destination, service } = yield* fixture;
+      yield* Effect.forEach(
+        Array.from({ length: 10_001 }, (_, index) => `folder-${index}`),
+        (name) => Effect.promise(() => NodeFSP.mkdir(NodePath.join(source, name))),
+        { concurrency: 32, discard: true },
+      );
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(NodePath.join(source, "large-file"), "");
+        await NodeFSP.truncate(NodePath.join(source, "large-file"), 1024 ** 3 + 1);
+      });
+      const exported = yield* service.exportFolder({ cwd: source });
+      expect(exported.entries).toHaveLength(10_002);
+      expect(exported.entries.find((entry) => entry.path === "large-file")?.byteLength).toBe(
+        1024 ** 3 + 1,
+      );
+      const imported = yield* service.importFolder(
+        decodeFolderImport({ destinationPath: destination, entries: exported.entries }),
+      );
+      yield* service.cancel(exported);
+      yield* service.cancel(imported);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("rejects escaping paths, links and collisions before creating a destination", () =>
+    Effect.gen(function* () {
+      const { destination, service } = yield* fixture;
+      const file = { kind: "file" as const, mode: 0o644, byteLength: 0 };
+      for (const entries of [
+        [{ ...file, path: "../escape" }],
+        [{ ...file, path: "C:/escape" }],
+        [
+          { ...file, path: "a" },
+          { ...file, path: "A" },
+        ],
+        [{ ...file, path: "a/b" }],
+        [{ ...file, kind: "symlink" as const, path: "link", linkTarget: "../escape" }],
+      ])
+        expect(
+          (yield* service.importFolder({ destinationPath: destination, entries }).pipe(Effect.flip))
+            ._tag,
+        ).toBe("ProjectFolderTransferError");
+      expect(yield* Effect.promise(() => NodeFSP.readdir(NodePath.dirname(destination)))).toEqual([
+        "source",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.effect(
