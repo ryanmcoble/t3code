@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
+import { Command } from "effect/cli";
 import * as ByteSize from "effect/ByteSize";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -19,6 +20,7 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 
 import {
+  devRunnerCli,
   checkPortAvailabilityOnHosts,
   createDevRunnerEnv,
   findFirstAvailableOffset,
@@ -70,6 +72,36 @@ const devServerInput = {
 } as const;
 
 it.layer(NodeServices.layer)("dev-runner", (it) => {
+  it.effect.each([
+    { args: ["dev:server", "--dry-run"], expectedPort: "13773" },
+    { args: ["dev:server", "--dry-run", "--port", "45123"], expectedPort: "45123" },
+  ])(
+    "ignores a parent server port unless --port is explicit ($expectedPort)",
+    ({ args, expectedPort }) =>
+      Effect.gen(function* () {
+        const messages: string[] = [];
+        yield* Command.runWith(devRunnerCli, { version: "0.0.0" })(args).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              netServiceLayer,
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_PORT: "3773" } })),
+              Logger.layer([
+                Logger.make((options) => {
+                  messages.push(String(options.message));
+                }),
+              ]),
+            ),
+          ),
+          Effect.provideService(HostProcess.WorkingDirectory, "/"),
+        );
+        assert.ok(
+          messages.some((message) => message.includes(`serverPort=${expectedPort} `)),
+          messages.join("\n"),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   describe("createDevRunnerEnv", () => {
     it.effect("forwards the reusable auth token to web dev and removes it for desktop", () =>
       Effect.gen(function* () {

@@ -205,11 +205,6 @@ const optionalBooleanConfig = (name: string): Config.Config<boolean | undefined>
     Config.option,
     Config.map((value) => Option.getOrUndefined(value)),
   );
-const optionalPortConfig = (name: string): Config.Config<number | undefined> =>
-  Config.Port(name).pipe(
-    Config.option,
-    Config.map((value) => Option.getOrUndefined(value)),
-  );
 const optionalIntegerConfig = (name: string): Config.Config<number | undefined> =>
   Config.Int(name).pipe(
     Config.option,
@@ -911,7 +906,7 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
   }
 });
 
-const devRunnerCli = Command.make("dev-runner", {
+export const devRunnerCli = Command.make("dev-runner", {
   mode: Argument.Literals("mode", DEV_RUNNER_MODES).pipe(
     Argument.withDescription("Development mode to run."),
   ),
@@ -943,8 +938,11 @@ const devRunnerCli = Command.make("dev-runner", {
   ),
   port: Flag.Int("port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
-    Flag.withDescription("Server port override (forwards to T3CODE_PORT)."),
-    Flag.withFallbackConfig(optionalPortConfig("T3CODE_PORT")),
+    Flag.withDescription(
+      "Explicit server port override (forwards to T3CODE_PORT). Ambient T3CODE_PORT values are ignored so a parent T3 server cannot redirect the child runner.",
+    ),
+    Flag.optional,
+    Flag.map(Option.getOrUndefined),
   ),
   devUrl: Flag.String("dev-url").pipe(
     Flag.withSchema(Schema.URLFromString),
