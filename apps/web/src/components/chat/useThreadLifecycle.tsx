@@ -523,8 +523,12 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       : null;
 
   const forceStop = useForceStopThread(environmentId);
+  // A draft already has a ref, but loading its detail before creation caches a 404 as deleted.
+  // Wait for its server shell, just as ChatView does for the main detail subscription.
   const anyRunStop = useAtomValue(
-    activeThreadRef ? environmentThreadDetails.runStopAtom(activeThreadRef) : NO_RUN_STOP_ATOM,
+    activeThreadShell !== null && activeThreadRef !== null
+      ? environmentThreadDetails.runStopAtom(activeThreadRef)
+      : NO_RUN_STOP_ATOM,
   );
   // A background Stop matters only while that work is still pending.
   const runStop = anyRunStop?.background && activeBackgroundTasks.length === 0 ? null : anyRunStop;
