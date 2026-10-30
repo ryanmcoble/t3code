@@ -12,6 +12,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { useEnvironments } from "../state/environments";
 import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
 import { Button } from "./ui/button";
+import { SettingsRow } from "./settings/settingsLayout";
 
 export function ProjectFolderActions({ projectRef }: { projectRef: ScopedProjectRef }) {
   const project = useProject(projectRef);
@@ -84,49 +85,52 @@ export function ProjectFolderActions({ projectRef }: { projectRef: ScopedProject
   };
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap gap-2">
-        {targets.length > 0 && !pair ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => openAddProjectToMachine({ projectRef, targetEnvironmentId: null })}
-          >
-            Copy to another machine
-          </Button>
-        ) : null}
-        {pair ? (
+    <SettingsRow
+      title={pair ? "Folder sync" : "Copy folder"}
+      description={
+        pair ? (
           <>
+            Manual two-way sync with {pair.peerPath}. Sync also applies file deletions. Stop agents
+            working in either folder before syncing.
+          </>
+        ) : (
+          "Copy this folder to another connected machine while keeping the original."
+        )
+      }
+      status={message ? <span role="status">{message}</span> : undefined}
+      control={
+        <div className="flex flex-wrap items-center gap-2">
+          {targets.length > 0 && !pair ? (
             <Button
               variant="outline"
               size="sm"
-              disabled={busy || !canWrite || !canWritePeer}
-              onClick={() => void act(false)}
+              onClick={() => openAddProjectToMachine({ projectRef, targetEnvironmentId: null })}
             >
-              {busy ? "Working…" : "Sync folders"}
+              Copy to another machine
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={busy || !canWrite || !canWritePeer}
-              onClick={() => void act(true)}
-            >
-              Unlink sync
-            </Button>
-          </>
-        ) : null}
-      </div>
-      {pair ? (
-        <p className="text-xs text-muted-foreground">
-          Manual two-way sync with {pair.peerPath}. Sync also applies file deletions. Stop agents
-          working in either folder before syncing.
-        </p>
-      ) : null}
-      {message ? (
-        <p role="status" className="text-sm text-muted-foreground">
-          {message}
-        </p>
-      ) : null}
-    </div>
+          ) : null}
+          {pair ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy || !canWrite || !canWritePeer}
+                onClick={() => void act(false)}
+              >
+                {busy ? "Working…" : "Sync folders"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy || !canWrite || !canWritePeer}
+                onClick={() => void act(true)}
+              >
+                Unlink sync
+              </Button>
+            </>
+          ) : null}
+        </div>
+      }
+    />
   );
 }
