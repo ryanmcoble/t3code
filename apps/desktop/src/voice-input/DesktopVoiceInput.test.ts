@@ -48,13 +48,19 @@ const fixture = Effect.gen(function* () {
   const helper = path.join(root, "voice-input", "t3-transcription");
   yield* fs.makeDirectory(path.dirname(helper), { recursive: true });
   yield* fs.writeFileString(helper, "test helper");
+  const archivedHelper = path.join(
+    root,
+    "app.asar/apps/desktop/resources/voice-input/t3-transcription",
+  );
+  yield* fs.makeDirectory(path.dirname(archivedHelper), { recursive: true });
+  yield* fs.writeFileString(archivedHelper, "archived helper");
   const environment = DesktopEnvironment.layer({
     platform: "darwin",
     processArch: "arm64",
-    dirname: path.join(root, "repo/apps/desktop/dist-electron"),
+    dirname: path.join(root, "app.asar/apps/desktop/dist-electron"),
     homeDirectory: root,
     appVersion: "0.0.0",
-    appPath: root,
+    appPath: path.join(root, "app.asar"),
     isPackaged: true,
     resourcesPath: root,
     runningUnderArm64Translation: false,
@@ -65,17 +71,19 @@ const fixture = Effect.gen(function* () {
 describe("desktop voice input lifecycle", () => {
   it.effect("removes private temporary audio after success and native failures", () =>
     Effect.gen(function* () {
-      const { fs, environment } = yield* fixture;
+      const { fs, helper, environment } = yield* fixture;
       for (const response of [
         { output: '{"text":"spoken text"}', code: 0 },
         { output: '{"error":"Unsupported language"}', code: 1 },
         { output: "malformed native output", code: 0 },
       ]) {
         let audioPath = "";
+        let executablePath = "";
         const spawner = ChildProcessSpawner.make((command) =>
           Effect.gen(function* () {
             assert.equal(command._tag, "StandardCommand");
             if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected pipe");
+            executablePath = command.command;
             audioPath = command.args[2]!;
             assert.deepEqual([...(yield* fs.readFile(audioPath))], [...request.audio]);
             assert.equal(Number((yield* fs.stat(audioPath)).mode) & 0o777, 0o600);
@@ -90,6 +98,7 @@ describe("desktop voice input lifecycle", () => {
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
         const result = yield* Effect.exit(service.run(request));
+        assert.equal(executablePath, helper);
         if (response.code === 0 && response.output.startsWith("{")) {
           assert.isTrue(Exit.isSuccess(result));
           if (Exit.isSuccess(result)) assert.equal(result.value.text, "spoken text");

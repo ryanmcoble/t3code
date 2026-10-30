@@ -75,15 +75,17 @@ export const make = Effect.gen(function* () {
       const unavailable = { ...result, available: false, installed: false };
       if (environment.platform !== "darwin" || request.settings.engine === "off")
         return unavailable;
-      const candidates = [
-        ...environment.resolveResourcePathCandidates("voice-input/t3-transcription"),
-        path.join(
-          environment.rootDir,
-          "native/apple-transcription/build",
-          environment.processArch,
-          "t3-transcription",
-        ),
-      ];
+      const candidates = environment.isPackaged
+        ? [path.join(environment.resourcesPath, "voice-input/t3-transcription")]
+        : [
+            ...environment.resolveResourcePathCandidates("voice-input/t3-transcription"),
+            path.join(
+              environment.rootDir,
+              "native/apple-transcription/build",
+              environment.processArch,
+              "t3-transcription",
+            ),
+          ];
       let executable: string | undefined;
       for (const candidate of candidates) {
         if (yield* fs.exists(candidate)) {
