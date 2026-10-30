@@ -300,6 +300,36 @@ describe("ProjectFolderTransfer", () => {
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
+  it.effect("automatic sync keeps the folder and unchanged open file handles", () =>
+    Effect.gen(function* () {
+      const { source, service } = yield* fixture;
+      const file = NodePath.join(source, "keep");
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(file, "original");
+        await NodeFSP.writeFile(NodePath.join(source, "remove"), "old");
+      });
+      const handle = yield* Effect.acquireRelease(
+        Effect.promise(() => NodeFSP.open(file, "r")),
+        (handle) => Effect.promise(() => handle.close()),
+      );
+      const inode = (yield* Effect.promise(() => NodeFSP.stat(source))).ino;
+      const snapshot = yield* service.exportFolder({ cwd: source });
+      const imported = yield* service.importFolder({
+        destinationPath: source,
+        previousEntries: snapshot.entries,
+        entries: snapshot.entries.filter((entry) => entry.path === "keep"),
+        incremental: true,
+      });
+      yield* service.finish(imported);
+      yield* Effect.promise(async () => {
+        expect((await NodeFSP.stat(source)).ino).toBe(inode);
+        await NodeFSP.appendFile(file, " plus edit");
+        expect(await handle.readFile("utf8")).toBe("original plus edit");
+        expect(await NodeFSP.readdir(source)).toEqual(["keep"]);
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
   it.effect(
     "tracks nested edits, reattaches after folder replacement, and closes watches on unlink",
     () =>
@@ -441,6 +471,10 @@ describe("ProjectFolderTransfer", () => {
           await NodeFSP.writeFile(NodePath.join(source, "local"), "old");
           await NodeFSP.writeFile(NodePath.join(source, "remote"), "old");
           await NodeFSP.writeFile(NodePath.join(source, "delete"), "old");
+          await NodeFSP.symlink("local", NodePath.join(source, "alias"));
+          await NodeFSP.writeFile(NodePath.join(source, "becomes-folder"), "old");
+          await NodeFSP.mkdir(NodePath.join(source, "becomes-file"));
+          await NodeFSP.writeFile(NodePath.join(source, "becomes-file/child"), "old");
         });
         yield* Effect.promise(() =>
           copyProjectFolder(registry, commands, {
@@ -472,12 +506,22 @@ describe("ProjectFolderTransfer", () => {
           ),
         ).toBe("keep");
         yield* Effect.promise(() => NodeFSP.rm(NodePath.join(destination, "remote-only")));
-        yield* Effect.promise(() => linkProjectFolders(registry, commands, local, remote));
+        yield* Effect.promise(() =>
+          linkProjectFolders(registry, commands, local, remote, {
+            automatic: true,
+            coordinatorEnvironmentId: local.environmentId,
+          }),
+        );
         const state = (yield* service.getSync(local))!;
         yield* Effect.promise(async () => {
           await NodeFSP.writeFile(NodePath.join(source, "local"), "local edit");
           await NodeFSP.writeFile(NodePath.join(destination, "remote"), "remote edit");
           await NodeFSP.rm(NodePath.join(destination, "delete"));
+          await NodeFSP.rm(NodePath.join(source, "becomes-folder"));
+          await NodeFSP.mkdir(NodePath.join(source, "becomes-folder"));
+          await NodeFSP.writeFile(NodePath.join(source, "becomes-folder/child"), "new nested file");
+          await NodeFSP.rm(NodePath.join(source, "becomes-file"), { recursive: true });
+          await NodeFSP.writeFile(NodePath.join(source, "becomes-file"), "new file");
         });
         expect(
           yield* Effect.promise(() =>
@@ -490,7 +534,22 @@ describe("ProjectFolderTransfer", () => {
         ).toEqual({ cwd: destination, reused: true });
         yield* Effect.promise(async () => {
           for (const folder of [source, destination]) {
-            expect(await NodeFSP.readdir(folder)).toEqual(["local", "remote"]);
+            expect(await NodeFSP.readdir(folder)).toEqual([
+              "alias",
+              "becomes-file",
+              "becomes-folder",
+              "local",
+              "remote",
+            ]);
+            expect(await NodeFSP.readFile(NodePath.join(folder, "alias"), "utf8")).toBe(
+              "local edit",
+            );
+            expect(
+              await NodeFSP.readFile(NodePath.join(folder, "becomes-folder/child"), "utf8"),
+            ).toBe("new nested file");
+            expect(await NodeFSP.readFile(NodePath.join(folder, "becomes-file"), "utf8")).toBe(
+              "new file",
+            );
             expect(await NodeFSP.readFile(NodePath.join(folder, "local"), "utf8")).toBe(
               "local edit",
             );

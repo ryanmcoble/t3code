@@ -39,6 +39,7 @@ interface Transfer {
   readonly pendingOffsets: Map<string, Set<number>>;
   readonly modified: Map<string, number>;
   readonly previousEntries?: ReadonlyArray<ProjectFolderEntry>;
+  readonly incremental?: boolean;
   touchedAt: number;
 }
 
@@ -211,6 +212,7 @@ const make = Effect.gen(function* () {
     root = await NodeFSP.realpath(root);
     const entries: ProjectFolderEntry[] = [];
     const modified = new Map<string, number>();
+    const statsByPath = new Map<string, NodeFS.Stats>();
     const cached = hashCaches.get(root) ?? new Map<string, { signature: string; hash: string }>();
     hashCaches.delete(root);
     hashCaches.set(root, cached);
@@ -263,13 +265,14 @@ const make = Effect.gen(function* () {
           ...(linkTarget === undefined ? {} : { linkTarget }),
         });
         modified.set(relative, stat.mtimeMs);
+        statsByPath.set(relative, stat);
         if (kind === "directory") await walk(relative);
       }
     };
     await walk("");
     for (const key of cached.keys()) if (!seenFiles.has(key)) cached.delete(key);
     validate(entries);
-    return { entries, modified };
+    return { entries, modified, statsByPath };
   };
   const same = (
     left: ReadonlyArray<ProjectFolderEntry>,
@@ -277,6 +280,99 @@ const make = Effect.gen(function* () {
   ) =>
     JSON.stringify([...left].toSorted((a, b) => a.path.localeCompare(b.path))) ===
     JSON.stringify([...right].toSorted((a, b) => a.path.localeCompare(b.path)));
+  const fileBytesUnchanged = (
+    entry: ProjectFolderEntry,
+    previous: ProjectFolderEntry | undefined,
+  ) =>
+    entry.kind === "file" &&
+    !!entry.hash &&
+    previous?.kind === "file" &&
+    entry.hash === previous.hash;
+
+  const applyIncrementalSync = async (
+    transfer: Transfer,
+    current: Awaited<ReturnType<typeof scan>>,
+  ) => {
+    const destination = await NodeFSP.realpath(transfer.destination!);
+    const previous = new Map(transfer.previousEntries!.map((entry) => [entry.path, entry]));
+    const signature = (stat: NodeFS.Stats) =>
+      `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+    const assertUnchanged = async (entry: ProjectFolderEntry) => {
+      const stat = await NodeFSP.lstat(path.join(destination, entry.path)).catch(() =>
+        fail("source_changed"),
+      );
+      const expected = current.statsByPath.get(entry.path)!;
+      // Our own child updates change directory timestamps; identity still has to match.
+      if (
+        entry.kind === "directory"
+          ? !stat.isDirectory() || stat.dev !== expected.dev || stat.ino !== expected.ino
+          : signature(stat) !== signature(expected)
+      )
+        fail("source_changed");
+    };
+    const parentInside = async (relative: string) => {
+      if (
+        !inside(destination, await NodeFSP.realpath(path.dirname(path.join(destination, relative))))
+      )
+        fail("source_changed");
+    };
+    // Replacing individual files keeps open working directories and unrelated file handles valid.
+    // An interruption can leave a subset applied. The unchanged baseline lets the next sync resume.
+    for (const entry of transfer.previousEntries!.toSorted(
+      (a, b) => b.path.length - a.path.length,
+    )) {
+      const next = transfer.entriesByPath.get(entry.path);
+      if (next?.kind === entry.kind) continue;
+      await parentInside(entry.path);
+      await assertUnchanged(entry);
+      const absolute = path.join(destination, entry.path);
+      if (entry.kind === "directory") await NodeFSP.rmdir(absolute);
+      else await NodeFSP.unlink(absolute);
+    }
+    for (const entry of transfer.entries
+      .filter((entry) => entry.kind === "directory")
+      .toSorted((a, b) => a.path.length - b.path.length)) {
+      if (previous.get(entry.path)?.kind === "directory") continue;
+      await parentInside(entry.path);
+      await NodeFSP.mkdir(path.join(destination, entry.path), { mode: 0o700 });
+    }
+    for (const entry of transfer.entries.filter((entry) => entry.kind !== "directory")) {
+      const before = previous.get(entry.path);
+      if (fileBytesUnchanged(entry, before)) {
+        if (entry.mode !== before!.mode) {
+          await parentInside(entry.path);
+          await assertUnchanged(before!);
+          await NodeFSP.chmod(path.join(destination, entry.path), entry.mode & 0o777);
+        }
+        continue;
+      }
+      if (
+        entry.kind === "symlink" &&
+        before?.kind === "symlink" &&
+        entry.linkTarget === before.linkTarget
+      )
+        continue;
+      await parentInside(entry.path);
+      const absolute = path.join(destination, entry.path);
+      const staged = path.join(transfer.root, entry.path);
+      if (before?.kind === entry.kind) {
+        await assertUnchanged(before);
+        await NodeFSP.rename(staged, absolute);
+      } else if (entry.kind === "file") {
+        // Hard-linking a private staged file exclusively creates a new path without overwriting a concurrent edit.
+        await NodeFSP.link(staged, absolute);
+      } else await NodeFSP.symlink(entry.linkTarget!, absolute);
+    }
+    for (const entry of transfer.entries
+      .filter((entry) => entry.kind === "directory")
+      .toSorted((a, b) => b.path.length - a.path.length)) {
+      const before = previous.get(entry.path);
+      if (before?.kind === "directory" && before.mode === entry.mode) continue;
+      await parentInside(entry.path);
+      if (before?.kind === "directory") await assertUnchanged(before);
+      await NodeFSP.chmod(path.join(destination, entry.path), entry.mode & 0o777);
+    }
+  };
   const syncPath = async (cwd: string) => {
     const root = await NodeFSP.realpath(expandHomePath(cwd, home));
     return path.join(
@@ -413,6 +509,7 @@ const make = Effect.gen(function* () {
         );
     return yield* io(async () => {
       await prune();
+      if (input.incremental && input.previousEntries === undefined) fail("invalid_path");
       validate(input.entries);
       const destination = path.resolve(expandHomePath(input.destinationPath, home));
       if (input.previousEntries === undefined) {
@@ -432,6 +529,7 @@ const make = Effect.gen(function* () {
       const transferId = NodeCrypto.randomUUID();
       sessions.set(transferId, {
         kind: "import",
+        incremental: input.incremental === true,
         root,
         destination,
         entries: input.entries,
@@ -445,6 +543,7 @@ const make = Effect.gen(function* () {
       const previousEntriesByPath = new Map(
         input.previousEntries?.map((entry) => [entry.path, entry]),
       );
+      const hasLinks = input.entries.some((entry) => entry.kind === "symlink");
       try {
         for (const entry of input.entries
           .filter((entry) => entry.kind === "directory")
@@ -453,11 +552,18 @@ const make = Effect.gen(function* () {
         for (const entry of input.entries.filter((entry) => entry.kind === "file")) {
           const previous = previousEntriesByPath.get(entry.path);
           if (entry.hash && previous?.kind === "file" && previous.hash === entry.hash) {
-            await NodeFSP.copyFile(
-              path.join(destination, entry.path),
-              path.join(root, entry.path),
-              NodeFS.constants.COPYFILE_EXCL | NodeFS.constants.COPYFILE_FICLONE,
-            );
+            if (!input.incremental)
+              await NodeFSP.copyFile(
+                path.join(destination, entry.path),
+                path.join(root, entry.path),
+                NodeFS.constants.COPYFILE_EXCL | NodeFS.constants.COPYFILE_FICLONE,
+              );
+            else if (hasLinks)
+              // Only link validation needs a placeholder; retained file bytes are never installed from staging.
+              await NodeFSP.writeFile(path.join(root, entry.path), new Uint8Array(), {
+                flag: "wx",
+                mode: 0o600,
+              });
             sessions.get(transferId)!.offsets.set(entry.path, entry.byteLength);
           } else
             await NodeFSP.writeFile(path.join(root, entry.path), new Uint8Array(), {
@@ -563,57 +669,77 @@ const make = Effect.gen(function* () {
   )(({ transferId }) =>
     locks.withLock(
       transferId,
-      io(async () => {
-        const transfer = session(transferId, "import");
-        for (const entry of transfer.entries) {
-          if (entry.kind === "file" && (transfer.offsets.get(entry.path) ?? 0) !== entry.byteLength)
-            fail("incomplete");
-        }
-        for (const entry of transfer.entries) {
-          const absolute = path.join(transfer.root, entry.path);
-          if (entry.kind === "symlink") await NodeFSP.symlink(entry.linkTarget!, absolute);
-          else if (entry.kind === "file") await NodeFSP.chmod(absolute, entry.mode & 0o777);
-        }
-        const staged = await scan(transfer.root);
-        const stagedEntriesByPath = new Map(staged.entries.map((entry) => [entry.path, entry]));
-        const expectedFiles = transfer.entries.filter((entry) => entry.kind === "file");
-        for (const entry of expectedFiles) {
-          if (entry.hash && stagedEntriesByPath.get(entry.path)?.hash !== entry.hash)
-            fail("invalid_chunk");
-        }
-        for (const entry of transfer.entries
-          .filter((entry) => entry.kind === "directory")
-          .toSorted((a, b) => b.path.length - a.path.length))
-          await NodeFSP.chmod(path.join(transfer.root, entry.path), entry.mode & 0o777);
-        const destination = transfer.destination!;
-        if (transfer.previousEntries !== undefined) {
-          if (!same((await scan(destination)).entries, transfer.previousEntries))
-            fail("source_changed");
-          const backup = `${transfer.root}-previous`;
-          await NodeFSP.rename(destination, backup);
-          try {
-            await NodeFSP.rename(transfer.root, destination);
-          } catch (cause) {
-            await NodeFSP.rename(backup, destination);
-            throw cause;
-          }
-          sessions.delete(transferId);
-          await NodeFSP.rm(backup, { recursive: true, force: true });
-          return { cwd: destination };
-        }
-        // Reserve the destination exclusively; rename must never replace somebody else's folder.
-        await NodeFSP.mkdir(destination).catch((cause: NodeJS.ErrnoException) => {
-          if (cause.code === "EEXIST") fail("destination_exists");
-          throw cause;
-        });
-        try {
-          await NodeFSP.rename(transfer.root, destination);
-        } catch (cause) {
-          await NodeFSP.rmdir(destination);
-          throw cause;
-        }
-        sessions.delete(transferId);
-        return { cwd: destination };
+      Effect.gen(function* () {
+        const transfer = yield* io(async () => session(transferId, "import"));
+        return yield* locks.withLock(
+          `destination:${transfer.destination}`,
+          io(async () => {
+            const previous = new Map(transfer.previousEntries?.map((entry) => [entry.path, entry]));
+            const retained = (entry: ProjectFolderEntry) =>
+              transfer.incremental && fileBytesUnchanged(entry, previous.get(entry.path));
+            const hasLinks = transfer.entries.some((entry) => entry.kind === "symlink");
+            for (const entry of transfer.entries) {
+              if (
+                entry.kind === "file" &&
+                (transfer.offsets.get(entry.path) ?? 0) !== entry.byteLength
+              )
+                fail("incomplete");
+            }
+            for (const entry of transfer.entries) {
+              const absolute = path.join(transfer.root, entry.path);
+              if (entry.kind === "symlink") await NodeFSP.symlink(entry.linkTarget!, absolute);
+              else if (entry.kind === "file" && (!retained(entry) || hasLinks))
+                await NodeFSP.chmod(absolute, entry.mode & 0o777);
+            }
+            const staged = await scan(transfer.root);
+            const stagedEntriesByPath = new Map(staged.entries.map((entry) => [entry.path, entry]));
+            const expectedFiles = transfer.entries.filter(
+              (entry) => entry.kind === "file" && !retained(entry),
+            );
+            for (const entry of expectedFiles) {
+              if (entry.hash && stagedEntriesByPath.get(entry.path)?.hash !== entry.hash)
+                fail("invalid_chunk");
+            }
+            for (const entry of transfer.entries
+              .filter((entry) => entry.kind === "directory")
+              .toSorted((a, b) => b.path.length - a.path.length))
+              await NodeFSP.chmod(path.join(transfer.root, entry.path), entry.mode & 0o777);
+            const destination = transfer.destination!;
+            if (transfer.previousEntries !== undefined) {
+              const current = await scan(destination);
+              if (!same(current.entries, transfer.previousEntries)) fail("source_changed");
+              if (transfer.incremental) {
+                await applyIncrementalSync(transfer, current);
+                await remove(transferId, transfer);
+                return { cwd: destination };
+              }
+              const backup = `${transfer.root}-previous`;
+              await NodeFSP.rename(destination, backup);
+              try {
+                await NodeFSP.rename(transfer.root, destination);
+              } catch (cause) {
+                await NodeFSP.rename(backup, destination);
+                throw cause;
+              }
+              sessions.delete(transferId);
+              await NodeFSP.rm(backup, { recursive: true, force: true });
+              return { cwd: destination };
+            }
+            // Reserve the destination exclusively; rename must never replace somebody else's folder.
+            await NodeFSP.mkdir(destination).catch((cause: NodeJS.ErrnoException) => {
+              if (cause.code === "EEXIST") fail("destination_exists");
+              throw cause;
+            });
+            try {
+              await NodeFSP.rename(transfer.root, destination);
+            } catch (cause) {
+              await NodeFSP.rmdir(destination);
+              throw cause;
+            }
+            sessions.delete(transferId);
+            return { cwd: destination };
+          }),
+        );
       }),
     ),
   );

@@ -259,3 +259,5 @@ syncs. A folder can have one sync partner. Older servers and mobile retain manua
 Once linked, both machines appear under **Run on** for new threads. In an existing stopped
 thread, choose the other machine and **Continue** to open a continuation with the saved
 transcript in its existing folder. File syncing runs independently of this handoff.
+
+Automatic sync updates individual files and preserves the folder and unchanged file handles. If interrupted mid-sync, the next comparison resumes from the saved baseline. Conflicting edits are kept on both machines and pause syncing until resolved.

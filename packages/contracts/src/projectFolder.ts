@@ -25,6 +25,7 @@ export const ProjectFolderImportInput = Schema.Struct({
   destinationPath: TrimmedNonEmptyString,
   entries: ProjectFolderEntries,
   previousEntries: Schema.optional(ProjectFolderEntries),
+  incremental: Schema.optional(Schema.Boolean),
 });
 export const ProjectFolderImportResult = Schema.Struct({
   ...ProjectFolderSessionInput.fields,

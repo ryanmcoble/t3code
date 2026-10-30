@@ -458,6 +458,7 @@ async function syncProjectFolderUnlocked<R, E>(
             destinationPath: destination.cwd,
             entries: merged,
             previousEntries: destination.entries,
+            incremental: state.automatic === true && peerState.value.automatic === true,
           },
         },
         options,
