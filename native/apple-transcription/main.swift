@@ -12,11 +12,20 @@ struct AppleTranscription {
     static func emit(_ value: [String: Any]) throws {
         let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
         FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data([10]))
     }
 
     static func main() async {
         do {
             let args = Array(CommandLine.arguments.dropFirst())
+            if args.first == "record" {
+                try await NativeVoiceRecording.run(args)
+                return
+            }
+            if args.first == "hotkey" {
+                try GlobalDictationHotkey.run(args)
+                return
+            }
             guard args.count >= 2 else {
                 throw TranscriptionFailure(message: "Missing transcription operation or language.")
             }

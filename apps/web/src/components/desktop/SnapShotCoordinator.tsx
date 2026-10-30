@@ -440,6 +440,15 @@ export function SnapShotCoordinator() {
         case "ready":
           void drain();
           return;
+        case "cancelled":
+          captureTargetsRef.current.delete(event.id);
+          questionPinsRef.current.delete(event.id);
+          dismissFailedSnapShot(
+            event.id,
+            soundedCaptureIdsRef.current,
+            pendingAnimationStartsRef.current,
+          );
+          return;
         case "failed": {
           if (event.id) {
             captureTargetsRef.current.delete(event.id);

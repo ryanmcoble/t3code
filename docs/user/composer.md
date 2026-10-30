@@ -204,6 +204,15 @@ start or finish dictation from the command palette or with **Cmd+Shift+D** on Ma
 (**Ctrl+Shift+D** elsewhere). Recordings use the system's current microphone, last
 up to five minutes, and are discarded after transcription or cancellation.
 
+On the Mac desktop app, **Cmd+Shift+Space** is a separate system-wide dictation
+shortcut. Keep the destination thread open in T3 Code. **Hold to talk** is the default:
+hold the shortcut while speaking and release it to transcribe and send to that thread
+without switching apps. Releasing
+before the microphone is ready cancels the recording. **Press to toggle** keeps the
+start/finish behavior; Enter-to-send applies when the T3 composer is focused. Change
+the key combination under **Settings → Keyboard shortcuts**. Turning the system-wide
+setting off releases the Mac shortcut and keeps app-local dictation available.
+
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,

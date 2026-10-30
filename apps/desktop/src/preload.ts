@@ -5,6 +5,7 @@ import type {
   DesktopPreviewRecordingInputEvent,
   DesktopPreviewTabState,
   DesktopSnapShotEvent,
+  DesktopVoiceShortcutEvent,
 } from "@t3tools/contracts";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
@@ -16,6 +17,7 @@ const SNAP_SHOT_EVENT_TYPES = new Set([
   "requested",
   "started",
   "ready",
+  "cancelled",
   "failed",
   "shortcut-changed",
 ]);
@@ -76,6 +78,25 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   voiceInput: {
     run: (request) => ipcRenderer.invoke(IpcChannels.VOICE_INPUT_RUN_CHANNEL, request),
     cancel: (id) => ipcRenderer.invoke(IpcChannels.VOICE_INPUT_CANCEL_CHANNEL, id),
+    prepareRecording: (id) =>
+      ipcRenderer.invoke(IpcChannels.VOICE_INPUT_RECORD_PREPARE_CHANNEL, id),
+    finishRecording: (id) => ipcRenderer.invoke(IpcChannels.VOICE_INPUT_RECORD_FINISH_CHANNEL, id),
+    cancelRecording: (id) => ipcRenderer.invoke(IpcChannels.VOICE_INPUT_RECORD_CANCEL_CHANNEL, id),
+    configureShortcut: (config) =>
+      ipcRenderer.invoke(IpcChannels.VOICE_INPUT_SHORTCUT_CONFIG_CHANNEL, config),
+    onShortcut: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: DesktopVoiceShortcutEvent) => {
+        if (
+          typeof value?.ownerKey === "string" &&
+          ["pressed", "released", "failed"].includes(value.type) &&
+          (value.message === undefined || typeof value.message === "string")
+        )
+          listener(value);
+      };
+      ipcRenderer.on(IpcChannels.VOICE_INPUT_SHORTCUT_EVENT_CHANNEL, handler);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.VOICE_INPUT_SHORTCUT_EVENT_CHANNEL, handler);
+    },
   },
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(IpcChannels.GET_APP_BRANDING_CHANNEL);

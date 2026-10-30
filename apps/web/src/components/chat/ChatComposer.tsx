@@ -3464,7 +3464,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
             <ComposerPromptLengthValidation
               message={
-                providerInputSubmissionError ?? composerSubmissionError ?? voiceInput.state.error
+                providerInputSubmissionError ??
+                composerSubmissionError ??
+                voiceInput.state.error ??
+                voiceInput.shortcutError
               }
             />
 

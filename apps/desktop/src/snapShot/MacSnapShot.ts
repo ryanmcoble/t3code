@@ -39,6 +39,40 @@ export async function captureMacWindowSnapshot(
   maxSize: Electron.Size,
 ): Promise<{ readonly source: MacSnapShotSource; readonly png: Buffer }> {
   await runMacSnapShot(active.id, outputPath);
+  return {
+    source: { name: active.title.trim() || active.owner.name.trim() || "Window" },
+    png: await readMacCapture(outputPath, maxSize),
+  };
+}
+
+export async function captureMacRegionSnapshot(
+  outputPath: string,
+  maxSize: Electron.Size,
+  signal: AbortSignal,
+): Promise<Buffer | null> {
+  const captured = await new Promise<boolean>((resolve, reject) => {
+    NodeChildProcess.execFile(
+      MAC_SCREEN_CAPTURE_PATH,
+      ["-i", "-s", "-x", "-t", "png", outputPath],
+      { signal },
+      (error) => {
+        if (!error) resolve(true);
+        else if (error.code === 1) resolve(false);
+        else reject(error);
+      },
+    );
+  });
+  if (!captured) return null;
+  try {
+    return await readMacCapture(outputPath, maxSize);
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+      return null;
+    throw error;
+  }
+}
+
+async function readMacCapture(outputPath: string, maxSize: Electron.Size): Promise<Buffer> {
   const capturedPng = await NodeFSP.readFile(outputPath);
   if (
     capturedPng.length < PNG_SIGNATURE.length ||
@@ -61,10 +95,5 @@ export async function captureMacWindowSnapshot(
           .toPNG()
       : capturedPng;
   if (png !== capturedPng) await NodeFSP.writeFile(outputPath, png);
-  return {
-    source: {
-      name: active.title.trim() || active.owner.name.trim() || "Window",
-    },
-    png,
-  };
+  return png;
 }

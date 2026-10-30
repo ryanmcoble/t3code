@@ -1,5 +1,16 @@
 import * as Effect from "effect/Effect";
-import { runVoiceInput, cancelVoiceInput } from "./methods/voiceInput.ts";
+import {
+  runVoiceInput,
+  cancelVoiceInput,
+  configureVoiceShortcut,
+  prepareVoiceRecording,
+  finishVoiceRecording,
+  cancelVoiceRecording,
+} from "./methods/voiceInput.ts";
+import * as DesktopVoiceShortcut from "../voice-input/DesktopVoiceShortcut.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as Stream from "effect/Stream";
+import { VOICE_INPUT_SHORTCUT_EVENT_CHANNEL } from "./channels.ts";
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
@@ -84,6 +95,16 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   const ipc = yield* DesktopIpc.DesktopIpc;
   yield* ipc.handle(runVoiceInput);
   yield* ipc.handle(cancelVoiceInput);
+  yield* ipc.handle(configureVoiceShortcut);
+  yield* ipc.handle(prepareVoiceRecording);
+  yield* ipc.handle(finishVoiceRecording);
+  yield* ipc.handle(cancelVoiceRecording);
+  const voiceShortcut = yield* DesktopVoiceShortcut.DesktopVoiceShortcut;
+  const voiceWindows = yield* ElectronWindow.ElectronWindow;
+  yield* voiceShortcut.events.pipe(
+    Stream.runForEach((event) => voiceWindows.sendAll(VOICE_INPUT_SHORTCUT_EVENT_CHANNEL, event)),
+    Effect.forkScoped,
+  );
   yield* installNotificationBadge();
   yield* PreviewIpc.installPreviewEventForwarding();
 

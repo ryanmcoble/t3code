@@ -81,6 +81,7 @@ type ShortcutCheck =
 export function SnapShotSettings() {
   const settings = useClientSettings((current) => ({
     snapShotAnimations: current.snapShotAnimations,
+    snapShotRegionCapture: current.snapShotRegionCapture,
     snapShotEnabled: current.snapShotEnabled,
     snapShotFlash: current.snapShotFlash,
     snapShotIncludeAccessibility: current.snapShotIncludeAccessibility,
@@ -90,6 +91,9 @@ export function SnapShotSettings() {
   }));
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const bridge = getDesktopSnapShotBridge();
+  const isMac = window.desktopBridge?.getClientPlatform() === "darwin";
+  const regionCapture = isMac && settings.snapShotRegionCapture;
+  const includeAccessibility = settings.snapShotIncludeAccessibility && !regionCapture;
   const registry = useContext(RegistryContext);
   const { state, refreshError } = useAtomValue(desktopSnapShotAtom);
   const [setupBusy, setSetupBusy] = useState(false);
@@ -306,8 +310,7 @@ export function SnapShotSettings() {
         saveSnapShotSetupResume(wizard?.wasEnabled ?? settings.snapShotEnabled);
         await bridge?.setupSnapShot("test-mac-capture");
       }
-      if (state?.mode === "direct")
-        await bridge?.requestSnapShotPermissions(settings.snapShotIncludeAccessibility);
+      if (state?.mode === "direct") await bridge?.requestSnapShotPermissions(includeAccessibility);
       const nextState =
         settings.snapShotEnabled && !state?.message
           ? await refreshState()
@@ -366,8 +369,7 @@ export function SnapShotSettings() {
             }
             control={
               <>
-                {settings.snapShotEnabled &&
-                !snapShotSetupComplete(state, settings.snapShotIncludeAccessibility) ? (
+                {settings.snapShotEnabled && !snapShotSetupComplete(state, includeAccessibility) ? (
                   <Button
                     size="xs"
                     variant="outline"
@@ -390,20 +392,38 @@ export function SnapShotSettings() {
               </>
             }
           />
+          {isMac ? (
+            <SettingsRow
+              {...searchableSetting("snap-shot-region")}
+              description="Drag a rectangle anywhere on your Mac to attach that region to your current T3 draft. Press Escape to cancel. Turn off to capture the active window."
+              control={
+                <Switch
+                  checked={settings.snapShotRegionCapture}
+                  onCheckedChange={(checked) => void save({ snapShotRegionCapture: checked })}
+                  aria-label="Select a region for screenshots"
+                />
+              }
+            />
+          ) : null}
           {settings.snapShotEnabled && captureAvailable ? (
             <>
               <SettingsRow
                 {...searchableSetting("snap-shot-accessibility")}
                 description="Include text and controls when the app makes them available."
-                status={snapShotAccessibilityUnavailableMessage(state)}
+                status={
+                  regionCapture
+                    ? "Selected regions include pixels only."
+                    : snapShotAccessibilityUnavailableMessage(state)
+                }
                 control={
                   <Switch
                     checked={
-                      !snapShotAccessibilityUnavailableMessage(state) &&
-                      settings.snapShotIncludeAccessibility
+                      !snapShotAccessibilityUnavailableMessage(state) && includeAccessibility
                     }
                     disabled={
-                      !captureAvailable || Boolean(snapShotAccessibilityUnavailableMessage(state))
+                      regionCapture ||
+                      !captureAvailable ||
+                      Boolean(snapShotAccessibilityUnavailableMessage(state))
                     }
                     aria-label="Include app text in snapshots"
                     onCheckedChange={(checked) => void saveIncludeAccessibility(checked)}
@@ -413,9 +433,11 @@ export function SnapShotSettings() {
               <SettingsRow
                 {...searchableSetting("snap-shot-shortcut")}
                 description={
-                  state?.linuxBackend === "picker"
-                    ? "Choose a window to capture from any app."
-                    : "Capture the window you're using without switching apps."
+                  regionCapture
+                    ? "Select a rectangle from any app and attach it to your current draft."
+                    : state?.linuxBackend === "picker"
+                      ? "Choose a window to capture from any app."
+                      : "Capture the window you're using without switching apps."
                 }
                 status={managedShortcut ? undefined : shortcutStatus}
                 control={
@@ -536,8 +558,8 @@ export function SnapShotSettings() {
                 status={feedbackUnavailable}
                 control={
                   <Switch
-                    checked={!feedbackUnavailable && settings.snapShotFlash}
-                    disabled={!captureAvailable || Boolean(feedbackUnavailable)}
+                    checked={!regionCapture && !feedbackUnavailable && settings.snapShotFlash}
+                    disabled={regionCapture || !captureAvailable || Boolean(feedbackUnavailable)}
                     aria-label="Flash captured window"
                     onCheckedChange={(checked) => void save({ snapShotFlash: checked })}
                   />
@@ -549,8 +571,8 @@ export function SnapShotSettings() {
                 status={feedbackUnavailable}
                 control={
                   <Switch
-                    checked={!feedbackUnavailable && settings.snapShotAnimations}
-                    disabled={!captureAvailable || Boolean(feedbackUnavailable)}
+                    checked={!regionCapture && !feedbackUnavailable && settings.snapShotAnimations}
+                    disabled={regionCapture || !captureAvailable || Boolean(feedbackUnavailable)}
                     aria-label="Animate snapshots"
                     onCheckedChange={(checked) => void save({ snapShotAnimations: checked })}
                   />
@@ -565,7 +587,7 @@ export function SnapShotSettings() {
           state={state}
           initialStep={wizard.initialStep}
           wasEnabled={wizard.wasEnabled}
-          includeAccessibility={settings.snapShotIncludeAccessibility}
+          includeAccessibility={includeAccessibility}
           busy={setupBusy}
           error={(setupError ?? refreshError)?.message ?? null}
           shortcutInput={shortcutInput}

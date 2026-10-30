@@ -3,6 +3,22 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type { DesktopEnvironment } from "../app/DesktopEnvironment.ts";
+
+export function nativeTranscriptionCandidates(environment: DesktopEnvironment["Service"]) {
+  const path = environment.path;
+  return environment.isPackaged
+    ? [path.join(environment.resourcesPath, "voice-input/t3-transcription")]
+    : [
+        ...environment.resolveResourcePathCandidates("voice-input/t3-transcription"),
+        path.join(
+          environment.rootDir,
+          "native/apple-transcription/build",
+          environment.processArch,
+          "t3-transcription",
+        ),
+      ];
+}
 
 const NativeResult = Schema.Struct({
   available: Schema.optionalKey(Schema.Boolean),

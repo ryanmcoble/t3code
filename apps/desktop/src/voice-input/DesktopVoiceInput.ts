@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import { runNativeTranscription } from "./nativeTranscription.ts";
+import { nativeTranscriptionCandidates, runNativeTranscription } from "./nativeTranscription.ts";
 
 export class DesktopVoiceInputError extends Schema.TaggedError<DesktopVoiceInputError>()(
   "DesktopVoiceInputError",
@@ -75,17 +75,7 @@ export const make = Effect.gen(function* () {
       const unavailable = { ...result, available: false, installed: false };
       if (environment.platform !== "darwin" || request.settings.engine === "off")
         return unavailable;
-      const candidates = environment.isPackaged
-        ? [path.join(environment.resourcesPath, "voice-input/t3-transcription")]
-        : [
-            ...environment.resolveResourcePathCandidates("voice-input/t3-transcription"),
-            path.join(
-              environment.rootDir,
-              "native/apple-transcription/build",
-              environment.processArch,
-              "t3-transcription",
-            ),
-          ];
+      const candidates = nativeTranscriptionCandidates(environment);
       let executable: string | undefined;
       for (const candidate of candidates) {
         if (yield* fs.exists(candidate)) {

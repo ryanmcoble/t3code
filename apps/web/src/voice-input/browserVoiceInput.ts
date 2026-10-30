@@ -6,6 +6,7 @@ import {
   type VoiceRecorder,
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
+import { DesktopVoiceRecorder } from "./desktopVoiceRecorder";
 
 class BrowserVoiceRecorder implements VoiceRecorder {
   uri: string | null = null;
@@ -117,14 +118,23 @@ export function createBrowserVoiceInput(input: {
   let revision = 0;
   let owner: string | null = null;
   const listeners = new Set<() => void>();
-  const recorder = new BrowserVoiceRecorder((uri, error) => {
+  const onFinished = (uri: string | null, error: string | null) => {
     void controller.handleRecorderStatus({
       isFinished: !error,
       hasError: error !== null,
       error,
       url: uri,
     });
-  });
+  };
+  const bridge = window.desktopBridge;
+  const native =
+    bridge?.getClientPlatform() === "darwin" &&
+    typeof bridge.voiceInput?.prepareRecording === "function" &&
+    typeof bridge.voiceInput?.finishRecording === "function" &&
+    typeof bridge.voiceInput?.cancelRecording === "function";
+  const recorder = native
+    ? new DesktopVoiceRecorder(bridge.voiceInput, onFinished)
+    : new BrowserVoiceRecorder(onFinished);
   const controller = new VoiceInputController({
     ...input,
     readDraft: () => {
@@ -133,6 +143,7 @@ export function createBrowserVoiceInput(input: {
     },
     recorder,
     requestPermission: async () => {
+      if (native) return { granted: true, canAskAgain: true };
       const permission = await navigator.permissions
         ?.query({ name: "microphone" as PermissionName })
         .catch(() => null);
@@ -143,7 +154,7 @@ export function createBrowserVoiceInput(input: {
     },
     configureRecording: async () => {},
     releaseRecording: async () => {
-      recorder.release();
+      await recorder.release();
     },
     deleteRecording: (uri) => URL.revokeObjectURL(uri),
     onStateChange: (next) => {
