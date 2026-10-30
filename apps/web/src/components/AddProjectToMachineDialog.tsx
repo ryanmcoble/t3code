@@ -380,9 +380,11 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                   <ArrowRightIcon className="-ms-1 size-3.5" aria-hidden />
                 </span>
                 <span>
-                  {selectedFiles.size === 0
-                    ? "no files"
-                    : `+ ${selectedFiles.size} ${selectedFiles.size === 1 ? "file" : "files"}`}
+                  {isFolder
+                    ? "all files"
+                    : selectedFiles.size === 0
+                      ? "no files"
+                      : `+ ${selectedFiles.size} ${selectedFiles.size === 1 ? "file" : "files"}`}
                 </span>
               </div>
               <div className="flex min-w-0 flex-col gap-1">
