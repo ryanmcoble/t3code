@@ -14,6 +14,7 @@ import { normalizeProjectPathForComparison } from "../state/projects.ts";
 export { findFolderSyncProject } from "./projectFolderSync.ts";
 
 type FolderCommandName =
+  | "folderStatus"
   | "folderExport"
   | "folderExportEnd"
   | "folderImport"
@@ -210,41 +211,79 @@ export async function copyProjectFolder<R, E>(
   }
 }
 
-export async function linkProjectFolders<R, E>(
+async function linkProjectFoldersUnlocked<R, E>(
   registry: AtomRegistry.AtomRegistry,
   commands: FolderCommands<R, E>,
   local: { environmentId: EnvironmentId; cwd: string },
   remote: { environmentId: EnvironmentId; cwd: string },
+  settings: {
+    readonly automatic?: boolean;
+    readonly coordinatorEnvironmentId?: EnvironmentId;
+  } = {},
 ) {
   const options = { label: "Link folder sync", reportFailure: false };
+  const previousStates: Array<ProjectFolderSyncState | null> = [];
   for (const [folder, peer] of [
     [local, remote],
     [remote, local],
   ] as const) {
     const previous = await executeAtomQuery(
       registry,
-      commands.folderSyncGet({ environmentId: folder.environmentId, input: { cwd: folder.cwd } }),
+      commands.folderSyncGet({
+        environmentId: folder.environmentId,
+        input: { cwd: folder.cwd },
+      }),
       { ...options, refresh: true },
     );
     if (previous._tag === "Failure") throw squashAtomCommandFailure(previous);
     if (
       previous.value !== null &&
       (previous.value.peerEnvironmentId !== peer.environmentId ||
-        previous.value.peerPath !== peer.cwd)
+        normalizeProjectPathForComparison(previous.value.peerPath) !==
+          normalizeProjectPathForComparison(peer.cwd))
     )
       throw new Error("One of these folders already has a sync partner. Unlink it first.");
+    previousStates.push(previous.value);
   }
-  const snapshot = await runAtomCommand(
-    registry,
-    commands.folderExport,
-    { environmentId: remote.environmentId, input: { cwd: remote.cwd } },
-    options,
-  );
-  if (snapshot._tag === "Failure") throw squashAtomCommandFailure(snapshot);
+  const snapshots: Array<{
+    environmentId: EnvironmentId;
+    transferId: string;
+    entries: readonly ProjectFolderEntry[];
+  }> = [];
   try {
-    for (const [folder, peer] of [
-      [local, remote],
-      [remote, local],
+    let baseline = previousStates[0]?.baseline;
+    const previousPeer = previousStates[1];
+    if (baseline && previousPeer) {
+      const peerEntries = new Map(previousPeer.baseline.map((entry) => [entry.path, entry]));
+      if (
+        baseline.length !== peerEntries.size ||
+        baseline.some((entry) => !folderEntryEqual(entry, peerEntries.get(entry.path)))
+      )
+        throw new Error(
+          "The previous sync did not finish on both machines. Both copies have been kept.",
+        );
+    } else {
+      for (const folder of [local, remote]) {
+        const result = await runAtomCommand(
+          registry,
+          commands.folderExport,
+          {
+            environmentId: folder.environmentId,
+            input: { cwd: folder.cwd },
+          },
+          options,
+        );
+        if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+        snapshots.push({ environmentId: folder.environmentId, ...result.value });
+      }
+      const remoteEntries = new Map(snapshots[1]!.entries.map((entry) => [entry.path, entry]));
+      baseline = snapshots[0]!.entries.filter((entry) =>
+        folderEntryEqual(entry, remoteEntries.get(entry.path)),
+      );
+    }
+    for (const [index, folder, peer] of [
+      [0, local, remote],
+      [1, remote, local],
     ] as const) {
       const result = await runAtomCommand(
         registry,
@@ -254,9 +293,11 @@ export async function linkProjectFolders<R, E>(
           input: {
             cwd: folder.cwd,
             state: {
+              ...previousStates[index],
+              ...settings,
               peerEnvironmentId: peer.environmentId,
               peerPath: peer.cwd,
-              baseline: snapshot.value.entries,
+              baseline,
             },
           },
         },
@@ -268,23 +309,38 @@ export async function linkProjectFolders<R, E>(
       );
     }
   } finally {
-    await runAtomCommand(
-      registry,
-      commands.folderExportEnd,
-      {
-        environmentId: remote.environmentId,
-        input: { transferId: snapshot.value.transferId, validate: false },
-      },
-      options,
-    );
+    for (const snapshot of snapshots)
+      await runAtomCommand(
+        registry,
+        commands.folderExportEnd,
+        {
+          environmentId: snapshot.environmentId,
+          input: { transferId: snapshot.transferId, validate: false },
+        },
+        options,
+      );
   }
 }
 
 export async function copyOrSyncProjectFolder<R, E>(
   registry: AtomRegistry.AtomRegistry,
   commands: FolderCommands<R, E>,
-  input: Parameters<typeof copyProjectFolder<R, E>>[2],
+  input: Parameters<typeof copyProjectFolder<R, E>>[2] & { readonly reuseExisting?: boolean },
 ): Promise<{ cwd: string; reused: boolean }> {
+  if (input.reuseExisting) {
+    input.signal?.throwIfAborted();
+    const status = await runAtomCommand(
+      registry,
+      commands.folderStatus,
+      {
+        environmentId: input.targetEnvironmentId,
+        input: { cwd: input.destinationPath },
+      },
+      { label: "Check existing folder", reportFailure: false },
+    );
+    if (status._tag === "Failure") throw squashAtomCommandFailure(status);
+    if (status.value.exists) return { cwd: status.value.cwd, reused: true };
+  }
   const result = await executeAtomQuery(
     registry,
     commands.folderSyncGet({
@@ -307,7 +363,7 @@ export async function copyOrSyncProjectFolder<R, E>(
   return { cwd: await copyProjectFolder(registry, commands, input), reused: false };
 }
 
-export async function syncProjectFolder<R, E>(
+async function syncProjectFolderUnlocked<R, E>(
   registry: AtomRegistry.AtomRegistry,
   commands: FolderCommands<R, E>,
   local: { environmentId: EnvironmentId; cwd: string },
@@ -448,9 +504,9 @@ export async function syncProjectFolder<R, E>(
       );
       if (finished._tag === "Failure") throw squashAtomCommandFailure(finished);
     }
-    for (const [folder, peer] of [
-      [local, remote],
-      [remote, local],
+    for (const [folder, peer, previous] of [
+      [local, remote, state],
+      [remote, local, peerState.value],
     ] as const) {
       const saved = await runAtomCommand(
         registry,
@@ -460,6 +516,7 @@ export async function syncProjectFolder<R, E>(
           input: {
             cwd: folder.cwd,
             state: {
+              ...previous,
               peerEnvironmentId: peer.environmentId,
               peerPath: peer.cwd,
               baseline: merged,
@@ -490,4 +547,71 @@ export async function syncProjectFolder<R, E>(
         options,
       );
   }
+}
+
+export { createFolderSyncMonitor } from "./projectFolderAutoSync.ts";
+
+const folderSyncQueues = new WeakMap<AtomRegistry.AtomRegistry, Map<string, Promise<unknown>>>();
+
+async function exclusiveFolderSync<A>(
+  registry: AtomRegistry.AtomRegistry,
+  local: { environmentId: EnvironmentId; cwd: string },
+  remote: { environmentId: EnvironmentId; cwd: string },
+  operation: () => Promise<A>,
+): Promise<A> {
+  const key = JSON.stringify(
+    [local, remote]
+      .map((folder) => [folder.environmentId, normalizeProjectPathForComparison(folder.cwd)])
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+  );
+  const queue = folderSyncQueues.get(registry) ?? new Map<string, Promise<unknown>>();
+  folderSyncQueues.set(registry, queue);
+  const previous = queue.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  queue.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (queue.get(key) === current) queue.delete(key);
+  }
+}
+
+export async function linkProjectFolders<R, E>(
+  ...args: Parameters<typeof linkProjectFoldersUnlocked<R, E>>
+) {
+  return exclusiveFolderSync(args[0], args[2], args[3], () => linkProjectFoldersUnlocked(...args));
+}
+
+export async function syncProjectFolder<R, E>(
+  ...args: Parameters<typeof syncProjectFolderUnlocked<R, E>>
+) {
+  return exclusiveFolderSync(
+    args[0],
+    args[2],
+    { environmentId: args[3].peerEnvironmentId, cwd: args[3].peerPath },
+    () => syncProjectFolderUnlocked(...args),
+  );
+}
+
+export async function unlinkProjectFolders<R, E>(
+  registry: AtomRegistry.AtomRegistry,
+  commands: FolderCommands<R, E>,
+  local: { environmentId: EnvironmentId; cwd: string },
+  state: ProjectFolderSyncState,
+) {
+  const peer = { environmentId: state.peerEnvironmentId, cwd: state.peerPath };
+  return exclusiveFolderSync(registry, local, peer, async () => {
+    for (const folder of [peer, local]) {
+      const result = await runAtomCommand(
+        registry,
+        commands.folderSyncSet,
+        { environmentId: folder.environmentId, input: { cwd: folder.cwd, state: null } },
+        { label: "Unlink folder sync", reportFailure: false },
+      );
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      registry.refresh(
+        commands.folderSyncGet({ environmentId: folder.environmentId, input: { cwd: folder.cwd } }),
+      );
+    }
+  });
 }

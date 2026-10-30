@@ -17,6 +17,7 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.projectsFolderStatus]: AuthFilesystemReadScope,
   [WS_METHODS.projectsFolderSyncSet]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsFolderExportEnd]: AuthFilesystemReadScope,
   [WS_METHODS.projectsFolderExport]: AuthFilesystemReadScope,

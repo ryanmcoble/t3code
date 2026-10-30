@@ -2793,6 +2793,7 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.projectsFolderStatus]: (input) => folderTransfer.status(input),
         [WS_METHODS.projectsFolderSyncGet]: (input) => folderTransfer.getSync(input),
         [WS_METHODS.projectsFolderSyncSet]: (input) => folderTransfer.setSync(input),
         [WS_METHODS.projectsFolderExportEnd]: (input) => folderTransfer.exportEnd(input),

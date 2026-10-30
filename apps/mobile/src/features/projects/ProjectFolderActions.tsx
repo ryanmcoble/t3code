@@ -1,7 +1,7 @@
+import { normalizeProjectPathForComparison } from "@t3tools/client-runtime/state/projects";
 import { useAtomValue } from "@effect/atom-react";
 import {
   copyOrSyncProjectFolder,
-  findFolderSyncProject,
   linkProjectFolders,
   syncProjectFolder,
 } from "@t3tools/client-runtime/operations/project-folder";
@@ -148,11 +148,17 @@ export function ProjectFolderActions(props: {
         source: { environmentId: project.environmentId, cwd: project.workspaceRoot },
         targetEnvironmentId: target.environmentId,
         destinationPath: path.trim(),
+        reuseExisting: Boolean(target.serverConfig?.environment.capabilities.projectFolderAutoSync),
         signal: controller.current.signal,
         onProgress: (copied, total) =>
           setMessage(`Copying ${Math.round(total === 0 ? 100 : (copied / total) * 100)}%`),
       });
-      let targetProject = reused ? findFolderSyncProject(projects, pair) : undefined;
+      let targetProject = projects.find(
+        (candidate) =>
+          candidate.environmentId === target.environmentId &&
+          normalizeProjectPathForComparison(candidate.workspaceRoot) ===
+            normalizeProjectPathForComparison(cwd),
+      );
       const projectId = targetProject?.id ?? ProjectId.make(uuidv4());
       if (!targetProject) {
         const created = await runAtomCommand(
@@ -170,7 +176,7 @@ export function ProjectFolderActions(props: {
           );
         targetProject = { ...created.value, environmentId: target.environmentId };
       }
-      if (linked && !reused)
+      if (linked && !pair)
         await linkProjectFolders(
           appAtomRegistry,
           projectEnvironment,
@@ -214,7 +220,7 @@ export function ProjectFolderActions(props: {
       } else props.onCopied?.(targetProject);
       setMessage(
         reused
-          ? `Folders synced. Continue on ${target.label}.`
+          ? `Existing folder ready. Continue on ${target.label}.`
           : `Folder copied to ${target.label}. The original stays here.`,
       );
     }

@@ -33,6 +33,12 @@ function fixture(parallelChunks: boolean) {
       AsyncResult.success(await operation(input)),
   });
   const commands = {
+    folderStatus: command(() => ({
+      exists: false,
+      cwd: "/target",
+      revision: "missing",
+      sync: null,
+    })),
     folderExport: command(() => ({ transferId: "source", entries: [entry] })),
     folderImport: command(() => ({
       transferId: "target",

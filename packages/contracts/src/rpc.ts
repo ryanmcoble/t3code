@@ -1,5 +1,6 @@
 import { ProjectFolderExportEndInput } from "./projectFolder.ts";
 import {
+  ProjectFolderStatusResult,
   ProjectFolderSyncGetInput,
   ProjectFolderSyncGetResult,
   ProjectFolderSyncSetInput,
@@ -421,6 +422,7 @@ import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
   projectsListIgnoredFiles: "projects.listIgnoredFiles",
+  projectsFolderStatus: "projects.folder.status",
   projectsFolderSyncGet: "projects.folder.sync.get",
   projectsFolderSyncSet: "projects.folder.sync.set",
   projectsFolderExportEnd: "projects.folder.export.end",
@@ -1319,6 +1321,11 @@ const WsProjectsListIgnoredFilesRpc = Rpc.make(WS_METHODS.projectsListIgnoredFil
   error: Schema.Union([ProjectListEntriesError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsFolderStatusRpc = Rpc.make(WS_METHODS.projectsFolderStatus, {
+  payload: ProjectFolderSyncGetInput,
+  success: ProjectFolderStatusResult,
+  error: Schema.Union([ProjectFolderTransferError, EnvironmentAuthorizationError]),
+});
 const WsProjectsFolderSyncGetRpc = Rpc.make(WS_METHODS.projectsFolderSyncGet, {
   payload: ProjectFolderSyncGetInput,
   success: ProjectFolderSyncGetResult,
@@ -2143,6 +2150,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeProjectClonesRpc,
   WsProjectsListEntriesRpc,
   WsProjectsListIgnoredFilesRpc,
+  WsProjectsFolderStatusRpc,
   WsProjectsFolderSyncGetRpc,
   WsProjectsFolderSyncSetRpc,
   WsProjectsFolderExportEndRpc,

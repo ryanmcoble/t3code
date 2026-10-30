@@ -7,6 +7,7 @@ import {
   PROJECT_FOLDER_CHUNK_BYTES,
   ProjectFolderTransferError,
   ProjectFolderSyncState,
+  type ProjectFolderStatusResult,
   type ProjectFolderEntry,
   type ProjectFolderExportInput,
   type ProjectFolderExportResult,
@@ -44,6 +45,9 @@ interface Transfer {
 export class ProjectFolderTransfer extends Context.Service<
   ProjectFolderTransfer,
   {
+    readonly status: (input: {
+      cwd: string;
+    }) => Effect.Effect<ProjectFolderStatusResult, ProjectFolderTransferError>;
     readonly getSync: (input: {
       cwd: string;
     }) => Effect.Effect<ProjectFolderSyncState | null, ProjectFolderTransferError>;
@@ -87,6 +91,36 @@ const make = Effect.gen(function* () {
   const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
   const locks = yield* KeyedLock.make<string>();
   const sessions = new Map<string, Transfer>();
+  const watchers = new Map<
+    string,
+    { identity: string; token: string; revision: number; watcher: NodeFS.FSWatcher }
+  >();
+  const hashCaches = new Map<string, Map<string, { signature: string; hash: string }>>();
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      for (const entry of watchers.values()) entry.watcher.close();
+      watchers.clear();
+    }),
+  );
+  const closeWatcher = (root: string) => {
+    watchers.get(root)?.watcher.close();
+    watchers.delete(root);
+  };
+  const watchRevision = (root: string, identity: string) => {
+    let current = watchers.get(root);
+    if (current?.identity !== identity) {
+      closeWatcher(root);
+      const watcher = NodeFS.watch(root, { recursive: true }, () => {
+        const entry = watchers.get(root);
+        if (entry) entry.revision++;
+      });
+      current = { identity, token: NodeCrypto.randomUUID(), revision: 0, watcher };
+      watchers.set(root, current);
+      watcher.on("error", () => closeWatcher(root));
+      watcher.unref();
+    }
+    return `${current.token}:${current.revision}`;
+  };
 
   const io = <A>(operation: () => Promise<A>) =>
     Effect.tryPromise({
@@ -177,6 +211,11 @@ const make = Effect.gen(function* () {
     root = await NodeFSP.realpath(root);
     const entries: ProjectFolderEntry[] = [];
     const modified = new Map<string, number>();
+    const cached = hashCaches.get(root) ?? new Map<string, { signature: string; hash: string }>();
+    hashCaches.delete(root);
+    hashCaches.set(root, cached);
+    if (hashCaches.size > 8) hashCaches.delete(hashCaches.keys().next().value!);
+    const seenFiles = new Set<string>();
     const walk = async (directory: string) => {
       for (const name of await NodeFSP.readdir(path.join(root, directory))) {
         const relative = directory ? `${directory}/${name}` : name;
@@ -190,7 +229,11 @@ const make = Effect.gen(function* () {
               ? "symlink"
               : fail("unsupported_entry");
         let hash: string | undefined;
-        if (kind === "file") {
+        const signature = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+        if (kind === "file") seenFiles.add(relative);
+        if (kind === "file" && cached.get(relative)?.signature === signature) {
+          hash = cached.get(relative)!.hash;
+        } else if (kind === "file") {
           const digest = NodeCrypto.createHash("sha256");
           const handle = await NodeFSP.open(
             absolute,
@@ -205,6 +248,8 @@ const make = Effect.gen(function* () {
           const after = await NodeFSP.lstat(absolute);
           if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs) fail("source_changed");
           hash = digest.digest("hex");
+          if (cached.size < 50_000 || cached.has(relative))
+            cached.set(relative, { signature, hash });
         }
         const linkTarget = kind === "symlink" ? await NodeFSP.readlink(absolute) : undefined;
         if (kind === "symlink" && !inside(root, await NodeFSP.realpath(absolute)))
@@ -222,6 +267,7 @@ const make = Effect.gen(function* () {
       }
     };
     await walk("");
+    for (const key of cached.keys()) if (!seenFiles.has(key)) cached.delete(key);
     validate(entries);
     return { entries, modified };
   };
@@ -239,6 +285,44 @@ const make = Effect.gen(function* () {
       `${NodeCrypto.createHash("sha256").update(root).digest("hex")}.json`,
     );
   };
+  const status: ProjectFolderTransfer["Service"]["status"] = Effect.fn(
+    "ProjectFolderTransfer.status",
+  )(function* ({ cwd }) {
+    return yield* io(async () => {
+      const absolute = path.resolve(expandHomePath(cwd, home));
+      const stat = await NodeFSP.stat(absolute).catch((error: NodeJS.ErrnoException) =>
+        error.code === "ENOENT" ? null : Promise.reject(error),
+      );
+      if (stat === null) return { cwd: absolute, exists: false, revision: "missing", sync: null };
+      if (!stat.isDirectory()) fail("invalid_path");
+      const root = await NodeFSP.realpath(absolute);
+      const file = await syncPath(root);
+      const contents = await NodeFSP.readFile(file, "utf8").catch((error: NodeJS.ErrnoException) =>
+        error.code === "ENOENT" ? null : Promise.reject(error),
+      );
+      const sync = contents === null ? null : decodeSyncState(JSON.parse(contents));
+      if (!sync?.automatic) closeWatcher(root);
+      const revision = sync?.automatic
+        ? watchRevision(root, `${stat.dev}:${stat.ino}`)
+        : "inactive";
+      return {
+        cwd: root,
+        exists: true,
+        revision,
+        sync:
+          sync === null
+            ? null
+            : {
+                peerEnvironmentId: sync.peerEnvironmentId,
+                peerPath: sync.peerPath,
+                ...(sync.automatic === undefined ? {} : { automatic: sync.automatic }),
+                ...(sync.coordinatorEnvironmentId === undefined
+                  ? {}
+                  : { coordinatorEnvironmentId: sync.coordinatorEnvironmentId }),
+              },
+      };
+    });
+  });
   const getSync: ProjectFolderTransfer["Service"]["getSync"] = Effect.fn(
     "ProjectFolderTransfer.getSync",
   )(function* ({ cwd }) {
@@ -270,6 +354,7 @@ const make = Effect.gen(function* () {
     return yield* io(async () => {
       const file = await syncPath(cwd);
       if (state === null) {
+        closeWatcher(await NodeFSP.realpath(expandHomePath(cwd, home)));
         await NodeFSP.rm(file, { force: true });
         return;
       }
@@ -566,6 +651,7 @@ const make = Effect.gen(function* () {
 
   return ProjectFolderTransfer.of({
     exportEnd,
+    status,
     getSync,
     setSync,
     exportFolder,

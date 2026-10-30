@@ -133,6 +133,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   projectCloneTracking: Schema.optionalKey(Schema.Boolean),
   /** Server answers projects.listIgnoredFiles. */
   projectFolderTransfer: Schema.optionalKey(Schema.Boolean),
+  projectFolderAutoSync: Schema.optionalKey(Schema.Boolean),
   ignoredFileListing: Schema.optionalKey(Schema.Boolean),
   environmentIcon: Schema.optionalKey(Schema.Boolean),
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),

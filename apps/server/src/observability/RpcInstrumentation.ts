@@ -145,6 +145,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribeProjectClones]: "source-control",
   [WS_METHODS.projectsListEntries]: "workspace",
   [WS_METHODS.projectsListIgnoredFiles]: "workspace",
+  [WS_METHODS.projectsFolderStatus]: "workspace",
   [WS_METHODS.projectsFolderSyncGet]: "workspace",
   [WS_METHODS.projectsFolderSyncSet]: "workspace",
   [WS_METHODS.projectsFolderExportEnd]: "workspace",

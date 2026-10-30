@@ -265,6 +265,7 @@ export const make = Effect.gen(function* () {
       projectCloneTracking: true,
       ignoredFileListing: true,
       projectFolderTransfer: true,
+      projectFolderAutoSync: true,
       triage: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),
