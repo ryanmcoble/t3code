@@ -22,7 +22,8 @@ const isStdioServer = Schema.is(StdioServer);
 const encodeConfig = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 // Copilot ignores custom session/new MCP entries. Its startup override augments
-// the user's native config; a private scoped file keeps credentials out of argv.
+// the user's native config, including T3's own bridge. A private scoped file
+// keeps credentials out of argv.
 export const copilotSetupMcpArgument = Effect.fn("copilotSetupMcpArgument")(function* (
   servers: ReadonlyArray<AcpSchema.McpServer>,
   fileSystem: FileSystem.FileSystem,
@@ -30,7 +31,6 @@ export const copilotSetupMcpArgument = Effect.fn("copilotSetupMcpArgument")(func
 ) {
   const mcpServers: Record<string, unknown> = {};
   for (const server of servers) {
-    if (server.name === "t3-code") continue;
     if (isHttpServer(server)) {
       mcpServers[server.name] = {
         type: "http",
