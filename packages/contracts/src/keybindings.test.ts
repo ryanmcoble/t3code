@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 
 import { ResolvedKeybindingsConfig } from "./keybindings.ts";
+import { DesktopVoiceShortcutConfig } from "./voiceInput.ts";
 
 const decode = <S extends Schema.Top>(
   schema: S,
@@ -48,5 +49,22 @@ it.effect("drops malformed resolved rule entries", () =>
       parsed.map((rule) => rule.command),
       ["terminal.toggle"],
     );
+  }),
+);
+
+it.effect("preserves the literal Space key in the desktop dictation shortcut", () =>
+  Effect.gen(function* () {
+    const value = {
+      ownerKey: "composer",
+      enabled: true,
+      shortcut: { ...shortcut, key: " ", shiftKey: true },
+    };
+    const parsed = yield* decode(DesktopVoiceShortcutConfig, value);
+    assert.deepEqual(parsed, value);
+    const rules = yield* decode(ResolvedKeybindingsConfig, [
+      { command: "composer.globalDictation", shortcut: value.shortcut },
+    ]);
+    assert.strictEqual(rules.length, 1);
+    assert.strictEqual(rules[0]!.shortcut.key, " ");
   }),
 );
