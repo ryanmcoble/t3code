@@ -5,6 +5,8 @@ import {
   AuthFilesystemWriteScope,
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
+  AuthAccessWriteScope,
+  EnvironmentId,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -416,6 +418,44 @@ it.effect("denies manual cleanup before the handler without settings permission"
     expect(yield* client[WS_METHODS.serverRunStorageCleanup]({}).pipe(Effect.flip)).toMatchObject({
       requiredPermission: AuthSettingsWriteScope,
     });
+    expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect.each([
+  { scopes: [AuthSettingsWriteScope], missing: AuthAccessWriteScope },
+  { scopes: [AuthAccessWriteScope], missing: AuthSettingsWriteScope },
+])("does not issue profile subscriptions with only $scopes", ({ scopes, missing }) =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.setupProfilesGrant> =>
+          tag !== WS_METHODS.setupProfilesGrant,
+      ),
+    );
+    let handled = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.setupProfilesGrant, () =>
+            Effect.sync(() => {
+              handled = true;
+              return { token: null };
+            }),
+          ),
+          RpcAuthorization.layer(scopes),
+        ),
+      ),
+    );
+    expect(
+      yield* client[WS_METHODS.setupProfilesGrant]({
+        profileId: "profile",
+        destinationEnvironmentId: EnvironmentId.make("target"),
+        revoke: false,
+      }).pipe(Effect.flip),
+    ).toMatchObject({ requiredPermission: missing });
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
 );

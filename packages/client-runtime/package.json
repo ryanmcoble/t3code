@@ -518,6 +518,10 @@
     "./provider-clients": {
       "types": "./src/providerClients.ts",
       "default": "./src/providerClients.ts"
+    },
+    "./state/setupProfiles": {
+      "types": "./src/state/setupProfiles.ts",
+      "default": "./src/state/setupProfiles.ts"
     }
   },
   "scripts": {

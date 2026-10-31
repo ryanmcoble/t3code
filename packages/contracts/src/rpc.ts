@@ -1,3 +1,12 @@
+import {
+  SetupProfileState,
+  SetupProfileCommand,
+  SetupProfileImportInput,
+  SetupProfileImportResult,
+  SetupProfileGrantInput,
+  SetupProfileGrantResult,
+  SetupProfileError,
+} from "./setupProfile.ts";
 import { ProjectFolderExportEndInput } from "./projectFolder.ts";
 import {
   ProjectFolderStatusResult,
@@ -531,6 +540,11 @@ export const WS_METHODS = {
   serverRunStorageCleanup: "server.runStorageCleanup",
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
   serverGetDatabaseStorage: "server.getDatabaseStorage",
+  setupProfilesSubscribe: "setupProfiles.subscribe",
+  setupProfilesState: "setupProfiles.state",
+  setupProfilesCommand: "setupProfiles.command",
+  setupProfilesImport: "setupProfiles.import",
+  setupProfilesGrant: "setupProfiles.grant",
   peerLinksList: "peerLinks.list",
   peerLinksLink: "peerLinks.link",
   peerLinksUnlink: "peerLinks.unlink",
@@ -810,6 +824,33 @@ const WsServerGetDatabaseStorageRpc = Rpc.make(WS_METHODS.serverGetDatabaseStora
   success: Schema.NullOr(DatabaseStorageStatus),
   stream: true,
   error: EnvironmentAuthorizationError,
+});
+
+const WsSetupProfilesSubscribeRpc = Rpc.make(WS_METHODS.setupProfilesSubscribe, {
+  payload: Schema.Struct({}),
+  success: SetupProfileState,
+  stream: true,
+  error: Schema.Union([SetupProfileError, EnvironmentAuthorizationError]),
+});
+const WsSetupProfilesStateRpc = Rpc.make(WS_METHODS.setupProfilesState, {
+  payload: Schema.Struct({}),
+  success: SetupProfileState,
+  error: Schema.Union([SetupProfileError, EnvironmentAuthorizationError]),
+});
+const WsSetupProfilesCommandRpc = Rpc.make(WS_METHODS.setupProfilesCommand, {
+  payload: SetupProfileCommand,
+  success: SetupProfileState,
+  error: Schema.Union([SetupProfileError, EnvironmentAuthorizationError]),
+});
+const WsSetupProfilesImportRpc = Rpc.make(WS_METHODS.setupProfilesImport, {
+  payload: SetupProfileImportInput,
+  success: SetupProfileImportResult,
+  error: Schema.Union([SetupProfileError, EnvironmentAuthorizationError]),
+});
+const WsSetupProfilesGrantRpc = Rpc.make(WS_METHODS.setupProfilesGrant, {
+  payload: SetupProfileGrantInput,
+  success: SetupProfileGrantResult,
+  error: Schema.Union([SetupProfileError, EnvironmentAuthorizationError]),
 });
 
 const WsPeerLinksListRpc = Rpc.make(WS_METHODS.peerLinksList, {
@@ -2064,6 +2105,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetStorageCleanupReportRpc,
   WsServerGetDatabaseStorageRpc,
   WsServerUpdateSettingsRpc,
+  WsSetupProfilesSubscribeRpc,
+  WsSetupProfilesStateRpc,
+  WsSetupProfilesCommandRpc,
+  WsSetupProfilesImportRpc,
+  WsSetupProfilesGrantRpc,
   WsPeerLinksListRpc,
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,

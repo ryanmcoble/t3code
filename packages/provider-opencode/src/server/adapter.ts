@@ -956,6 +956,21 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           mcpSession?.capabilities?.has("device") === true,
         );
         if (hasT3Mcp) {
+          for (const c of mcpSession.setupConnections ?? []) {
+            yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
+              client.mcp.add({
+                name: c.name,
+                config:
+                  c.transport === "http"
+                    ? { type: "remote", url: c.url!, headers: { ...c.headers }, oauth: false }
+                    : {
+                        type: "local",
+                        command: [c.command!, ...c.args],
+                        environment: { ...c.environment },
+                      },
+              }),
+            );
+          }
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({
               name: "t3-code",

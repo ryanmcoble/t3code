@@ -9,6 +9,7 @@ import {
   extractDevinSubagentUpdate,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
+import { copilotSetupMcpArgument } from "./copilotSetupMcp.ts";
 import {
   copilotClientCapabilitiesMeta,
   extractCopilotSubagentUpdate,
@@ -132,6 +133,7 @@ export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
 function makeAcpRegistryRuntime(
   options: AcpRegistryAdapterV2Options,
   catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"],
+  copilotSetup?: { readonly fileSystem: FileSystem.FileSystem; readonly path: Path.Path },
 ) {
   return (
     input: AcpAdapterV2RuntimeInput,
@@ -153,16 +155,40 @@ function makeAcpRegistryRuntime(
               }),
           ),
         );
+      const additionalMcpConfig =
+        copilotSetup === undefined
+          ? undefined
+          : yield* copilotSetupMcpArgument(
+              input.mcpServers,
+              copilotSetup.fileSystem,
+              copilotSetup.path,
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new EffectAcpErrors.AcpSpawnError({ command: resolved.spawn.command, cause }),
+              ),
+            );
+      const spawn = {
+        ...resolved.spawn,
+        ...(additionalMcpConfig === undefined
+          ? {}
+          : {
+              args: [
+                ...(resolved.spawn.args ?? []),
+                "--additional-mcp-config",
+                additionalMcpConfig,
+              ],
+            }),
+        ...(processEnvironment === undefined
+          ? {}
+          : {
+              env: { ...resolved.spawn.env, ...processEnvironment },
+            }),
+      };
       const context = yield* Layer.build(
         AcpSessionRuntime.layer({
           ...runtimeInput,
-          spawn:
-            processEnvironment === undefined
-              ? resolved.spawn
-              : {
-                  ...resolved.spawn,
-                  env: { ...resolved.spawn.env, ...processEnvironment },
-                },
+          spawn,
           ...(options.settings.authMethodId ? { authMethodId: options.settings.authMethodId } : {}),
           customModels: readCustomModelEntries(options.settings.customModels).map(
             (entry) => entry.slug,
@@ -252,7 +278,15 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeSessionUpdate: copilotRouting.normalizeSessionUpdate,
           extractSubagentUpdate: extractCopilotSubagentUpdate,
         }),
-    makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(runtimeOptions, catalog),
+    makeRuntime:
+      options.makeRuntime ??
+      makeAcpRegistryRuntime(
+        runtimeOptions,
+        catalog,
+        isCopilot
+          ? { fileSystem: yield* FileSystem.FileSystem, path: yield* Path.Path }
+          : undefined,
+      ),
     ...(runtimeCoordinator === undefined
       ? {}
       : {

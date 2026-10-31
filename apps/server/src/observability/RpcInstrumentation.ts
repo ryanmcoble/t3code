@@ -11,6 +11,11 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 // Trace queries and dashboards depend on these labels, including deviations from method prefixes.
 const RPC_AGGREGATES = {
+  [WS_METHODS.setupProfilesSubscribe]: "setupProfiles",
+  [WS_METHODS.setupProfilesState]: "setupProfiles",
+  [WS_METHODS.setupProfilesCommand]: "setupProfiles",
+  [WS_METHODS.setupProfilesImport]: "setupProfiles",
+  [WS_METHODS.setupProfilesGrant]: "setupProfiles",
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: "orchestrationV2",
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: "orchestration",
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: "orchestration",

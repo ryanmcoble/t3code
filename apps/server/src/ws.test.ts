@@ -1,3 +1,4 @@
+import * as SetupProfiles from "./setupProfiles/SetupProfiles.ts";
 import * as ProjectFolderTransfer from "./project/ProjectFolderTransfer.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -549,6 +550,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(ProjectFolderTransfer.ProjectFolderTransfer)({}),
+  Layer.mock(SetupProfiles.SetupProfiles)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
 );
 

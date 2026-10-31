@@ -1,3 +1,4 @@
+import * as SetupProfiles from "./setupProfiles/SetupProfiles.ts";
 import * as ProjectFolderTransfer from "./project/ProjectFolderTransfer.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -1341,6 +1342,7 @@ export const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const folderTransfer = yield* ProjectFolderTransfer.ProjectFolderTransfer;
+      const setupProfiles = yield* SetupProfiles.SetupProfiles;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -2498,6 +2500,11 @@ export const layerWsRpc = (
         [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
+        [WS_METHODS.setupProfilesSubscribe]: () => setupProfiles.changes,
+        [WS_METHODS.setupProfilesState]: () => setupProfiles.state,
+        [WS_METHODS.setupProfilesCommand]: (input) => setupProfiles.command(input),
+        [WS_METHODS.setupProfilesImport]: (input) => setupProfiles.importSetup(input),
+        [WS_METHODS.setupProfilesGrant]: (input) => setupProfiles.grant(input),
         [WS_METHODS.peerLinksList]: (_input) =>
           peerLinks.list.pipe(Effect.map((links) => ({ links }))),
         [WS_METHODS.peerLinksLink]: (input) => peerLinks.link(input),

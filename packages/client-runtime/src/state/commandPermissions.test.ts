@@ -70,6 +70,8 @@ const setup = Effect.gen(function* () {
 
 describe("command permissions", () => {
   it.effect.each([
+    [WS_METHODS.setupProfilesCommand, AuthSettingsWriteScope],
+    [WS_METHODS.setupProfilesImport, AuthSettingsWriteScope],
     [WS_METHODS.projectsFolderExport, AuthFilesystemReadScope],
     [WS_METHODS.projectsFolderExportEnd, AuthFilesystemReadScope],
     [WS_METHODS.projectsFolderRead, AuthFilesystemReadScope],
@@ -78,7 +80,7 @@ describe("command permissions", () => {
     [WS_METHODS.projectsFolderFinish, AuthFilesystemWriteScope],
     [WS_METHODS.projectsFolderCancel, AuthFilesystemWriteScope],
     [WS_METHODS.projectsFolderSyncSet, AuthFilesystemWriteScope],
-  ] as const)("uses the destination filesystem grant for %s", ([method, scope]) =>
+  ] as const)("uses the required destination grant for %s", ([method, scope]) =>
     Effect.gen(function* () {
       const registry = yield* setup;
       const permission = createCommandPermissions(runtime, method);

@@ -1,3 +1,6 @@
+import * as Option from "effect/Option";
+import * as SetupProfiles from "./setupProfiles/SetupProfiles.ts";
+import * as SetupProfileWorker from "./setupProfiles/SetupProfileWorker.ts";
 import {
   CommandId,
   DEFAULT_MODEL,
@@ -548,11 +551,21 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       ),
       startEffectWorker: runStartupPhase(
         "orchestration-v2.effect-worker.start",
-        startEffectWorkerWithRelay({
-          runWorker: EffectWorker.runDaemon,
-          startRelay: agentAwarenessRelay.start(),
-          workerFiberRef: effectWorkerFiber,
-        }),
+        Effect.gen(function* () {
+          const setupProfiles = yield* Effect.serviceOption(SetupProfiles.SetupProfiles);
+          if (Option.isSome(setupProfiles))
+            yield* SetupProfileWorker.start.pipe(
+              Effect.provideService(SetupProfiles.SetupProfiles, setupProfiles.value),
+            );
+        }).pipe(
+          Effect.andThen(
+            startEffectWorkerWithRelay({
+              runWorker: EffectWorker.runDaemon,
+              startRelay: agentAwarenessRelay.start(),
+              workerFiberRef: effectWorkerFiber,
+            }),
+          ),
+        ),
       ),
       autoBootstrap: (serverConfig.autoBootstrapProjectFromCwd
         ? runStartupPhase(

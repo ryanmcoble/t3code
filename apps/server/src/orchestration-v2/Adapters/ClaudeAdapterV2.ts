@@ -1723,6 +1723,7 @@ export function claudeMcpQueryOverrides(input: {
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
+      ...McpProviderSession.setupClaudeMcpServers(session),
       "t3-code": {
         type: "http",
         url: session.endpoint,

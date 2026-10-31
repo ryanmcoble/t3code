@@ -1,3 +1,9 @@
+import * as SetupProfiles from "./setupProfiles/SetupProfiles.ts";
+import * as SetupProfileStore from "./setupProfiles/SetupProfileStore.ts";
+import * as SetupPackages from "./setupProfiles/SetupPackages.ts";
+import * as SetupFiles from "./setupProfiles/SetupFiles.ts";
+import * as SetupRuntime from "./setupProfiles/SetupRuntime.ts";
+import * as SetupProfileHttp from "./setupProfiles/http.ts";
 import * as ProjectFolderTransfer from "./project/ProjectFolderTransfer.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
@@ -483,6 +489,17 @@ const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
 const layerServerEnvironment = ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer));
 
 const layerAuth = EnvironmentAuth.layer.pipe(
+  Layer.provideMerge(
+    SetupProfiles.layer.pipe(
+      Layer.provideMerge(SetupFiles.layer),
+      Layer.provideMerge(SetupPackages.layer),
+      Layer.provideMerge(SetupProfileStore.layer),
+      Layer.provideMerge(SetupRuntime.layer),
+      Layer.provide(layerServerEnvironment),
+      Layer.provide(ServerSecretStore.layer),
+      Layer.provide(layerServerSettings),
+    ),
+  ),
   Layer.provideMerge(layerPersistence),
   Layer.provide(layerServerEnvironment),
   Layer.provide(ServerSecretStore.layer),
@@ -734,6 +751,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
+    SetupProfileHttp.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,

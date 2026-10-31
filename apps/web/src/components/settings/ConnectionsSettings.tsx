@@ -1,3 +1,4 @@
+import { SetupProfilesSettings } from "./SetupProfilesSettings";
 import { SessionPermissions } from "./SessionPermissions";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
@@ -1532,6 +1533,13 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
           environmentId={environment.environmentId}
           environmentLabel={peerLinkHosts.length > 1 ? environment.label : null}
           isSearchTarget={index === 0}
+        />
+      ))}
+      {loadBalancingEnvironments.map((environment) => (
+        <SetupProfilesSettings
+          key={environment.environmentId}
+          environmentId={environment.environmentId}
+          label={environment.label}
         />
       ))}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />

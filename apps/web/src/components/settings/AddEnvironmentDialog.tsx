@@ -1,3 +1,5 @@
+import { NewEnvironmentSetupDialog } from "./NewEnvironmentSetupDialog";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { pipe } from "effect/Function";
 import { ChevronsLeftRightEllipsisIcon, PlusIcon, TerminalIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
@@ -82,6 +84,8 @@ export function AddEnvironmentDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly onErrorChange: (error: string | null) => void;
 }) {
+  const [offerSetup, setOfferSetup] = useState(false);
+  const [setupDestination, setSetupDestination] = useState<EnvironmentId | null>(null);
   const desktopBridge = window.desktopBridge;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
@@ -167,6 +171,7 @@ export function AddEnvironmentDialog({
     setSavedBackendSshHost("");
     setSavedBackendSshUsername("");
     setSavedBackendSshPort("");
+    if (offerSetup && !routeTarget) setSetupDestination(result.value);
     onOpenChange(false);
     toastManager.add({
       type: "success",
@@ -244,6 +249,7 @@ export function AddEnvironmentDialog({
     setSavedBackendSshHost("");
     setSavedBackendSshUsername("");
     setSavedBackendSshPort("");
+    if (offerSetup && !routeTarget) setSetupDestination(result.value);
     onOpenChange(false);
     toastManager.add(
       routeTarget
@@ -595,57 +601,75 @@ export function AddEnvironmentDialog({
   );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <DialogTrigger
-              render={
-                <Button size="xs" variant="ghost-muted" aria-label="Add environment">
-                  <PlusIcon className="size-3" />
-                  <span>Add environment</span>
-                </Button>
-              }
-            />
-          }
-        />
-        <TooltipPopup side="top">Add environment</TooltipPopup>
-      </Tooltip>
-      <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>
-            {routeTarget ? `Add a route to ${routeTarget.label}` : "Add Environment"}
-          </DialogTitle>
-          <DialogDescription>
-            {routeTarget
-              ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
-              : "Pair another environment to this client."}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogPanel>
-          <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              {renderConnectionModeCard({
-                mode: "remote",
-                title: "Remote link",
-                description: "Enter a backend host and pairing code.",
-                icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
-              })}
-              {desktopBridge
-                ? renderConnectionModeCard({
-                    mode: "ssh",
-                    title: "SSH",
-                    description: "Use local SSH config, agent, and tunnels for the backend.",
-                    icon: <TerminalIcon aria-hidden className="size-4" />,
-                  })
-                : null}
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <DialogTrigger
+                render={
+                  <Button size="xs" variant="ghost-muted" aria-label="Add environment">
+                    <PlusIcon className="size-3" />
+                    <span>Add environment</span>
+                  </Button>
+                }
+              />
+            }
+          />
+          <TooltipPopup side="top">Add environment</TooltipPopup>
+        </Tooltip>
+        <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              {routeTarget ? `Add a route to ${routeTarget.label}` : "Add Environment"}
+            </DialogTitle>
+            <DialogDescription>
+              {routeTarget
+                ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
+                : "Pair another environment to this client."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                {renderConnectionModeCard({
+                  mode: "remote",
+                  title: "Remote link",
+                  description: "Enter a backend host and pairing code.",
+                  icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
+                })}
+                {desktopBridge
+                  ? renderConnectionModeCard({
+                      mode: "ssh",
+                      title: "SSH",
+                      description: "Use local SSH config, agent, and tunnels for the backend.",
+                      icon: <TerminalIcon aria-hidden className="size-4" />,
+                    })
+                  : null}
+              </div>
+              <AnimatedHeight>
+                {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
+              </AnimatedHeight>
+              {!routeTarget ? (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={offerSetup}
+                    onChange={(e) => setOfferSetup(e.target.checked)}
+                  />
+                  Apply a setup profile after connecting
+                </label>
+              ) : null}
             </div>
-            <AnimatedHeight>
-              {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
-            </AnimatedHeight>
-          </div>
-        </DialogPanel>
-      </DialogPopup>
-    </Dialog>
+          </DialogPanel>
+        </DialogPopup>
+      </Dialog>
+      {setupDestination ? (
+        <NewEnvironmentSetupDialog
+          environmentId={setupDestination}
+          onClose={() => setSetupDestination(null)}
+        />
+      ) : null}
+    </>
   );
 }

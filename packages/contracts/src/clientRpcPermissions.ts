@@ -17,6 +17,9 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.setupProfilesCommand]: AuthSettingsWriteScope,
+  [WS_METHODS.setupProfilesImport]: AuthSettingsWriteScope,
+  [WS_METHODS.setupProfilesGrant]: AuthAccessWriteScope,
   [WS_METHODS.projectsFolderStatus]: AuthFilesystemReadScope,
   [WS_METHODS.projectsFolderSyncSet]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsFolderExportEnd]: AuthFilesystemReadScope,
@@ -89,6 +92,8 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === WS_METHODS.setupProfilesGrant)
+    return [AuthAccessWriteScope, AuthSettingsWriteScope];
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)
