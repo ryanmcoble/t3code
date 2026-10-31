@@ -5,10 +5,6 @@ import {
   linkProjectFolders,
   syncProjectFolder,
 } from "@t3tools/client-runtime/operations/project-folder";
-import {
-  getAddProjectInitialQuery,
-  getCloneDestinationPath,
-} from "@t3tools/client-runtime/operations/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -67,12 +63,7 @@ export function ProjectFolderActions(props: {
   const [targetId, setTargetId] = useState<string | null>(null);
   const target = targets.find((entry) => entry.environmentId === targetId) ?? targets[0];
   const [pathOverride, setPathOverride] = useState<string | null>(null);
-  const copyPath =
-    pathOverride ??
-    getCloneDestinationPath(
-      getAddProjectInitialQuery(target?.serverConfig?.settings.addProjectBaseDirectory),
-      project?.workspaceRoot.split(/[\\/]/).pop(),
-    );
+  const copyPath = pathOverride ?? project?.workspaceRoot ?? "";
   const [linked, setLinked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);

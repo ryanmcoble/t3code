@@ -45,7 +45,9 @@ vi.mock(import("../hooks/useHandleNewThread"), async (original) => ({
 }));
 vi.mock(import("../hooks/useAddProjectTargets"), async (original) => ({
   ...(await original()),
-  useAddProjectTargets: (() => []) as never,
+  useAddProjectTargets: (() => [
+    { environmentId: EnvironmentId.make("target-environment"), label: "LLM", machine: "laptop" },
+  ]) as never,
 }));
 vi.mock(import("../hooks/useLogicalProjectEnvironments"), async (original) => ({
   ...(await original()),
@@ -68,6 +70,27 @@ const PROJECT = {
 };
 
 describe("AddProjectToMachineDialog", () => {
+  it.each(["repository", "folder"])(
+    "defaults a %s transfer to its source path and allows an override",
+    async (kind) => {
+      const sourcePath = "/Users/ryan/Documents/Projects/Personal/mnemosyne";
+      project.setup({
+        ...PROJECT,
+        workspaceRoot: sourcePath,
+        repositoryIdentity:
+          kind === "repository"
+            ? { locator: { remoteUrl: "git@github.com:ryanmcoble/mnemosyne.git" } }
+            : null,
+      });
+      await using screen = await render(<AddProjectToMachineDialogHost />);
+      await act(() => openAddProjectToMachine({ projectRef, targetEnvironmentId: null }));
+      const destination = screen.getByRole("textbox", { name: "Folder on LLM" });
+      await expect.element(destination).toHaveValue(sourcePath);
+      await destination.fill("/home/ryan/projects/mnemosyne");
+      await expect.element(destination).toHaveValue("/home/ryan/projects/mnemosyne");
+    },
+  );
+
   it("closes when its project goes away", async () => {
     project.setup(PROJECT);
     await using screen = await render(<AddProjectToMachineDialogHost />);

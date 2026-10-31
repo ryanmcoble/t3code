@@ -2,10 +2,7 @@ import {
   copyOrSyncProjectFolder,
   linkProjectFolders,
 } from "@t3tools/client-runtime/operations/project-folder";
-import {
-  normalizeProjectPathForComparison,
-  inferProjectTitleFromPath,
-} from "@t3tools/client-runtime/state/projects";
+import { normalizeProjectPathForComparison } from "@t3tools/client-runtime/state/projects";
 import { useAtomValue } from "@effect/atom-react";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -13,11 +10,6 @@ import { orchestrationEnvironment } from "../state/orchestration";
 import { threadContextAttachment } from "../lib/threadContextAttachment";
 import { useParams } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import {
-  getAddProjectInitialQuery,
-  getCloneDestinationPath,
-  getCloneDirectoryName,
-} from "@t3tools/client-runtime/operations/projects";
 import {
   type EnvironmentId,
   type ProjectIgnoredFile,
@@ -165,12 +157,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   );
   const targetEnvironment = environments.find((env) => env.environmentId === target?.environmentId);
   const isFolder = sourceUrl.length === 0;
-  const defaultPath = getCloneDestinationPath(
-    getAddProjectInitialQuery(targetEnvironment?.serverConfig?.settings.addProjectBaseDirectory),
-    isFolder
-      ? inferProjectTitleFromPath(project?.workspaceRoot ?? "folder")
-      : getCloneDirectoryName(sourceUrl),
-  );
+  const defaultPath = project?.workspaceRoot ?? "";
   const [pathOverride, setPathOverride] = useState<string | null>(null);
   const destinationPath = reuseSyncedFolder
     ? folderSync.data!.peerPath
