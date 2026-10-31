@@ -85,20 +85,24 @@ export function SetupProfilesSettings({
   const [secretName, setSecretName] = useState("");
   const [secretValue, setSecretValue] = useState("");
   const providers = config?.providers ?? [];
-  const execute = async (input: Parameters<typeof run>[0]["input"]) => {
+  type SetupCommandInput = Parameters<typeof run>[0]["input"];
+  const execute = async (input: SetupCommandInput | ReadonlyArray<SetupCommandInput>) => {
     setBusy(true);
     setError(null);
     try {
-      const result = await run({ environmentId, input });
-      if (isAtomCommandInterrupted(result) || result._tag === "Failure") {
-        setError(
-          "The setup operation failed. Refresh and check this environment's access and status.",
-        );
-        return false;
+      const commands = "operation" in input ? [input] : input;
+      for (const command of commands) {
+        const result = await run({ environmentId, input: command });
+        if (isAtomCommandInterrupted(result) || result._tag === "Failure") {
+          setError(
+            "The setup operation failed. Refresh and check this environment's access and status.",
+          );
+          return false;
+        }
       }
-      state.refresh();
       return true;
     } finally {
+      state.refresh();
       setBusy(false);
     }
   };
@@ -154,38 +158,66 @@ export function SetupProfilesSettings({
                 {binding.error}
               </p>
             ) : null}
-            {binding.items.map((item) => (
-              <p className="text-xs" key={`${item.instanceId}:${item.kind}:${item.name}`}>
-                {item.instanceId} · {item.name}: {item.status} · {item.message}
-              </p>
-            ))}
-            {(binding.conflicts ?? []).map((path) => (
-              <div key={path} className="space-y-1 rounded border p-2">
-                <p className="break-all text-xs">{path}</p>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!allowed || busy}
-                    onClick={() =>
-                      void execute({ operation: "resolve", path, resolution: "keep-local" })
-                    }
-                  >
-                    Keep local
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!allowed || busy}
-                    onClick={() =>
-                      void execute({ operation: "resolve", path, resolution: "use-profile" })
-                    }
-                  >
-                    Use profile
-                  </Button>
-                </div>
-              </div>
-            ))}
+            <details className="space-y-2">
+              <summary className="cursor-pointer text-sm">
+                Setup items ({binding.items.length})
+              </summary>
+              {binding.items.map((item) => (
+                <p className="text-xs" key={`${item.instanceId}:${item.kind}:${item.name}`}>
+                  {item.instanceId} · {item.name}: {item.status} · {item.message}
+                </p>
+              ))}
+            </details>
+            {(binding.conflicts?.length ?? 0) > 0 ? (
+              <details className="space-y-2">
+                <summary className="cursor-pointer text-sm">
+                  Review local file conflicts ({binding.conflicts!.length})
+                </summary>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!allowed || busy}
+                  onClick={() =>
+                    void execute(
+                      binding.conflicts!.map((path): SetupCommandInput => ({
+                        operation: "resolve",
+                        path,
+                        resolution: "use-profile",
+                      })),
+                    )
+                  }
+                >
+                  Use profile for all listed conflicts
+                </Button>
+                {(binding.conflicts ?? []).map((path) => (
+                  <div key={path} className="space-y-1 rounded border p-2">
+                    <p className="break-all text-xs">{path}</p>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!allowed || busy}
+                        onClick={() =>
+                          void execute({ operation: "resolve", path, resolution: "keep-local" })
+                        }
+                      >
+                        Keep local
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!allowed || busy}
+                        onClick={() =>
+                          void execute({ operation: "resolve", path, resolution: "use-profile" })
+                        }
+                      >
+                        Use profile
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </details>
+            ) : null}
             {binding.items.some((item) => item.status === "needs-secret") ? (
               <div className="space-y-2">
                 <p className="text-sm">Bind a credential on this environment</p>
