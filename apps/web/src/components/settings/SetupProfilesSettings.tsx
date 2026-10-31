@@ -13,6 +13,7 @@ import {
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { useState } from "react";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
 import { setupProfiles } from "~/state/setupProfiles";
 import { serverEnvironment } from "~/state/server";
@@ -75,6 +76,10 @@ export function SetupProfilesSettings({
   const [destinationId, setDestinationId] = useState("");
   const [grantProfile, setGrantProfile] = useState("");
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: "subscription credential",
+    onError: (error) => setError(error.message),
+  });
   const [draftId, setDraftId] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
   const [secretName, setSecretName] = useState("");
@@ -588,6 +593,13 @@ export function SetupProfilesSettings({
                   value={issuedToken}
                   onFocus={(e) => e.target.select()}
                 />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => copyToClipboard(issuedToken, undefined)}
+                >
+                  {isCopied ? "Copied" : "Copy subscription credential"}
+                </Button>
                 <span className="text-xs">
                   Profile {grantProfile} · owner {environmentId}
                 </span>

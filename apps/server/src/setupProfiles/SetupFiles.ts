@@ -44,8 +44,6 @@ const make = Effect.gen(function* () {
   const packages = yield* SetupPackages.SetupPackages;
   const storageError = (cause: unknown) => new SetupProfileError({ reason: "storage", cause });
   const currentDigest = Effect.fn("SetupFiles.currentDigest")(function* (target: string) {
-    const exists = yield* fs.exists(target).pipe(Effect.mapError(storageError));
-    if (!exists) return null;
     if (
       yield* fs.readLink(target).pipe(
         Effect.map(() => true),
@@ -54,6 +52,8 @@ const make = Effect.gen(function* () {
     ) {
       return "symlink";
     }
+    const exists = yield* fs.exists(target).pipe(Effect.mapError(storageError));
+    if (!exists) return null;
     const stat = yield* fs.stat(target).pipe(Effect.mapError(storageError));
     if (stat.type !== "File") return "directory";
     if (Number(stat.size) > 64 * 1024 * 1024) return "too-large";
@@ -71,6 +71,38 @@ const make = Effect.gen(function* () {
     const relative = path.relative(root, real);
     return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
   }, Effect.mapError(storageError));
+  const displacedParent = Effect.fn("SetupFiles.displacedParent")(function* (
+    target: string,
+    root: string,
+  ) {
+    let ancestor = path.dirname(target);
+    while (ancestor !== path.dirname(ancestor)) {
+      const linked = yield* fs.readLink(ancestor).pipe(
+        Effect.map(() => true),
+        Effect.orElseSucceed(() => false),
+      );
+      const exists = yield* fs.exists(ancestor);
+      if (linked && !exists) return ancestor;
+      if (exists) {
+        const relative = path.relative(root, yield* fs.realPath(ancestor));
+        const inside =
+          relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+        if (inside) return null;
+        if (linked) return ancestor;
+      }
+      ancestor = path.dirname(ancestor);
+    }
+    return null;
+  }, Effect.mapError(storageError));
+  const preserveLink = Effect.fn("SetupFiles.preserveLink")(function* (link: string, root: string) {
+    if (!(yield* contained(link, root))) return yield* new SetupProfileError({ reason: "invalid" });
+    yield* fs.readLink(link).pipe(Effect.mapError(storageError));
+    const backup = path.join(
+      path.dirname(link),
+      `.t3-setup-link-backup-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`,
+    );
+    yield* fs.rename(link, backup).pipe(Effect.mapError(storageError));
+  });
   const atomicWrite = Effect.fn("SetupFiles.atomicWrite")(function* (file: SetupFile) {
     const parent = path.dirname(file.path);
     yield* fs
@@ -133,6 +165,19 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(storageError));
       const root =
         previous?.root ?? (yield* fs.realPath(file.root).pipe(Effect.mapError(storageError)));
+      if (yield* displacedParent(file.path, root)) {
+        if (!previous)
+          yield* store.savePath({
+            path: file.path,
+            root,
+            profile_id: profileId,
+            digest: null,
+            pending_digest: null,
+            overridden: 0,
+          });
+        conflicts.push(file.path);
+        continue;
+      }
       if (!(yield* contained(file.path, root))) {
         conflicts.push(file.path);
         continue;
@@ -140,8 +185,11 @@ const make = Effect.gen(function* () {
       const actual = yield* currentDigest(file.path);
       const desired = `${file.digest}:${file.executable ? "x" : "r"}`;
       const recovered = previous?.pending_digest === actual && actual !== null;
+      // Existing identical files can join the profile without being rewritten.
+      const matchesProfile = actual === desired && (!previous || previous.profile_id === profileId);
       if (
         actual !== null &&
+        !matchesProfile &&
         (!previous ||
           previous.profile_id !== profileId ||
           (!recovered && actual !== previous.digest))
@@ -200,9 +248,15 @@ const make = Effect.gen(function* () {
       yield* store.savePath({ ...entry, overridden: 1 });
       return;
     }
+    const parentLink = yield* displacedParent(target, entry.root);
+    if (parentLink) yield* preserveLink(parentLink, entry.root);
     if (!(yield* contained(target, entry.root)))
       return yield* new SetupProfileError({ reason: "invalid" });
-    const digest = yield* currentDigest(target);
+    let digest = yield* currentDigest(target);
+    if (digest === "symlink") {
+      yield* preserveLink(target, entry.root);
+      digest = null;
+    }
     if (
       ["symlink", "directory", "too-large"].includes(digest ?? "") &&
       resolution === "use-profile"

@@ -10,6 +10,7 @@ import * as ServerConfig from "../config.ts";
 import {
   MAX_SETUP_FILES,
   MAX_SETUP_PACKAGE_BYTES,
+  MAX_SETUP_PROFILE_BYTES,
   validSetupName,
   validSetupPath,
 } from "./validation.ts";
@@ -104,7 +105,7 @@ const make = Effect.gen(function* () {
         size += Number(stat.size);
         if (
           !validSetupPath(relative) ||
-          size > MAX_SETUP_PACKAGE_BYTES ||
+          size > MAX_SETUP_PROFILE_BYTES ||
           files.length >= MAX_SETUP_FILES
         )
           return yield* new SetupProfileError({ reason: "invalid" });

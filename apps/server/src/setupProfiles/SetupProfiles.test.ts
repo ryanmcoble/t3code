@@ -28,6 +28,7 @@ import * as SetupProfileStore from "./SetupProfileStore.ts";
 import * as SetupPackages from "./SetupPackages.ts";
 import * as SetupFiles from "./SetupFiles.ts";
 import * as SetupRuntime from "./SetupRuntime.ts";
+import { validateSetupProfile } from "./validation.ts";
 
 const isProfile = Schema.is(SetupProfile);
 const isSetupError = Schema.is(SetupProfileError);
@@ -500,6 +501,92 @@ it.effect("recovers a completed file rename and refuses a redirected managed roo
         [target],
       );
       assert.strictEqual(yield* fs.readFileString(`${root}/elsewhere/canary/SKILL.md`), "private");
+      for (const kind of ["parent", "file", "external-parent", "external-file"] as const) {
+        const aliasRoot = `${root}/aliases-${kind}`;
+        const skillDirectory = `${aliasRoot}/skill`;
+        const skillFile = `${skillDirectory}/SKILL.md`;
+        const parent = kind.endsWith("parent");
+        const external = kind.startsWith("external");
+        yield* fs.makeDirectory(parent ? aliasRoot : skillDirectory, {
+          recursive: true,
+        });
+        const link = parent ? skillDirectory : skillFile;
+        const missing = `${root}/removed-checkout/${kind}`;
+        if (external) {
+          yield* fs.makeDirectory(parent ? missing : `${root}/removed-checkout`, {
+            recursive: true,
+          });
+          yield* fs.writeFileString(parent ? `${missing}/SKILL.md` : missing, "untouched");
+        }
+        yield* fs.symlink(missing, link);
+        const desired = [{ path: skillFile, root: aliasRoot, digest: changed, executable: false }];
+        assert.deepEqual(yield* files.apply(`aliases-${kind}`, desired), [skillFile]);
+        assert.strictEqual(yield* fs.readLink(link), missing);
+        yield* files.resolve(skillFile, "use-profile");
+        assert.deepEqual(yield* files.apply(`aliases-${kind}`, desired), []);
+        assert.strictEqual(yield* fs.readFileString(skillFile), "new");
+        if (external)
+          assert.strictEqual(
+            yield* fs.readFileString(parent ? `${missing}/SKILL.md` : missing),
+            "untouched",
+          );
+        const backupDirectory = parent ? aliasRoot : skillDirectory;
+        const backups = (yield* fs.readDirectory(backupDirectory)).filter((name) =>
+          name.startsWith(".t3-setup-link-backup-"),
+        );
+        assert.strictEqual(backups.length, 1);
+        assert.strictEqual(yield* fs.readLink(`${backupDirectory}/${backups[0]}`), missing);
+      }
+      const matchingFile = `${root}/matching/SKILL.md`;
+      yield* fs.makeDirectory(`${root}/matching`);
+      yield* fs.writeFileString(matchingFile, "new", { mode: 0o640 });
+      assert.deepEqual(
+        yield* files.apply("matching-profile", [
+          {
+            path: matchingFile,
+            root: `${root}/matching`,
+            digest: changed,
+            executable: false,
+          },
+        ]),
+        [],
+      );
+      assert.strictEqual((yield* fs.stat(matchingFile)).mode & 0o777, 0o640);
+      assert.deepEqual(
+        yield* files.apply("another-profile", [
+          {
+            path: matchingFile,
+            root: `${root}/matching`,
+            digest: changed,
+            executable: false,
+          },
+        ]),
+        [matchingFile],
+      );
+    }),
+  ),
+);
+
+it.effect("accepts a bounded toolkit while keeping individual blobs bounded", () =>
+  withSetup(() =>
+    Effect.gen(function* () {
+      const packages = yield* SetupPackages.SetupPackages;
+      const skill = (name: string) => ({
+        name,
+        drivers: [],
+        files: [
+          { path: "SKILL.md", digest: "a".repeat(64), size: 40 * 1024 ** 2, executable: false },
+        ],
+      });
+      validateSetupProfile({ connections: [], skills: [skill("one"), skill("two")] });
+      assert.throws(() =>
+        validateSetupProfile({
+          connections: [],
+          skills: Array.from({ length: 13 }, (_, i) => skill(`tool-${i}`)),
+        }),
+      );
+      const error = yield* packages.put(new Uint8Array(64 * 1024 ** 2 + 1)).pipe(Effect.flip);
+      assert.strictEqual(error.reason, "invalid");
     }),
   ),
 );

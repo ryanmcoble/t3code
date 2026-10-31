@@ -1,6 +1,8 @@
 import { SetupProfileError, type SetupProfile } from "@t3tools/contracts";
 
 export const MAX_SETUP_PACKAGE_BYTES = 64 * 1024 * 1024;
+// Complete toolkits can contain several bounded binaries plus their supporting files.
+export const MAX_SETUP_PROFILE_BYTES = 512 * 1024 * 1024;
 export const MAX_SETUP_FILES = 10_000;
 
 export function validSetupName(name: string): boolean {
@@ -97,7 +99,12 @@ export function validateSetupProfile(profile: Pick<SetupProfile, "connections" |
     for (const f of skill.files) {
       const key = f.path.toLowerCase();
       total += f.size;
-      if (!validSetupPath(f.path) || paths.has(key) || total > MAX_SETUP_PACKAGE_BYTES)
+      if (
+        !validSetupPath(f.path) ||
+        paths.has(key) ||
+        f.size > MAX_SETUP_PACKAGE_BYTES ||
+        total > MAX_SETUP_PROFILE_BYTES
+      )
         throw new SetupProfileError({ reason: "invalid" });
       paths.add(key);
     }
