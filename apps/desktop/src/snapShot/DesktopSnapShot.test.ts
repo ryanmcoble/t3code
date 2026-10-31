@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -48,6 +49,7 @@ const {
   getFileIconMock,
   getSourcesMock,
   macCaptureMock,
+  macRegionCaptureMock,
   linuxCaptureMock,
   linuxBackendMock,
   niriShortcutMock,
@@ -116,6 +118,7 @@ const {
   getFileIconMock: vi.fn(),
   getSourcesMock: vi.fn(),
   macCaptureMock: vi.fn(),
+  macRegionCaptureMock: vi.fn(),
   linuxCaptureMock: vi.fn<
     () => Promise<import("./LinuxSnapShot.ts").LinuxWindowSnapshot | undefined>
   >(async () => undefined),
@@ -187,7 +190,10 @@ vi.mock("./RegionSnapShot.ts", async (original) => ({
 vi.mock("./WindowsCaptureFeedback.ts", () => ({
   showWindowsCaptureOverlay: (window: Electron.BaseWindow) => window.showInactive(),
 }));
-vi.mock("./MacSnapShot.ts", () => ({ captureMacWindowSnapshot: macCaptureMock }));
+vi.mock("./MacSnapShot.ts", () => ({
+  captureMacWindowSnapshot: macCaptureMock,
+  captureMacRegionSnapshot: macRegionCaptureMock,
+}));
 vi.mock("./LinuxSnapShot.ts", () => ({
   captureLinuxWindow: linuxCaptureMock,
   getLinuxCaptureSupport: async () => ({
@@ -533,6 +539,56 @@ const enabledSettings = (overrides: Partial<ClientSettings> = {}): ClientSetting
   snapShotEnabled: true,
   ...overrides,
 });
+
+it.effect.each(["captured", "cancelled"] as const)(
+  "routes Mac region selection through the snapshot pipeline when %s",
+  (outcome) => {
+    registerShortcutMock.mockReset().mockReturnValue(true);
+    mediaAccessStatusMock.mockReturnValue("granted");
+    accessibilityTrustedMock.mockReturnValue(false);
+    activeWindowMock.mockClear();
+    macCaptureMock.mockClear();
+    accessibilityProcessReadMock.mockClear();
+    macRegionCaptureMock
+      .mockReset()
+      .mockResolvedValue(outcome === "captured" ? Buffer.from([1, 2, 3]) : null);
+    let metadata: string | undefined;
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* DesktopSnapShot.make;
+        yield* service.configure(enabledSettings({ snapShotRegionCapture: true }));
+        const result = yield* service.capture.pipe(Effect.exit);
+        assert.equal(macRegionCaptureMock.mock.calls.length, 1);
+        assert.equal(activeWindowMock.mock.calls.length, 0);
+        assert.equal(macCaptureMock.mock.calls.length, 0);
+        assert.equal(accessibilityProcessReadMock.mock.calls.length, 0);
+        assert.isNull((yield* service.state).message);
+        if (outcome === "captured") {
+          assert.isTrue(Exit.isSuccess(result));
+          assert.isDefined(metadata);
+          assert.equal(JSON.parse(metadata!).source.windowTitle, "Selected region");
+        } else {
+          assert.isTrue(Exit.isFailure(result));
+          assert.isUndefined(metadata);
+        }
+      }),
+    ).pipe(
+      Effect.provide(
+        layerTest("darwin", {
+          makeDirectory: () => Effect.void,
+          rename: () => Effect.void,
+          remove: () => Effect.void,
+          writeFile: () => Effect.void,
+          writeFileString: (_path, value) =>
+            Effect.sync(() => {
+              metadata = value;
+            }),
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => accessibilityTrustedMock.mockReturnValue(true))),
+    );
+  },
+);
 
 function concurrentCaptureFixture(platform: NodeJS.Platform, animations: boolean) {
   vi.stubEnv("XDG_SESSION_TYPE", "wayland");

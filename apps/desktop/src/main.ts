@@ -54,6 +54,8 @@ import * as DesktopObservability from "./app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
 import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
 import * as DesktopVoiceInput from "./voice-input/DesktopVoiceInput.ts";
+import * as DesktopVoiceShortcut from "./voice-input/DesktopVoiceShortcut.ts";
+import * as DesktopVoiceRecording from "./voice-input/DesktopVoiceRecording.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
 import * as DesktopSnapShot from "./snapShot/DesktopSnapShot.ts";
 import * as DesktopAppSettings from "./settings/DesktopAppSettings.ts";
@@ -204,6 +206,8 @@ const layerDesktopLocalEnvironmentAuth = DesktopLocalEnvironmentAuth.layer.pipe(
 
 const layerDesktopApplication = Layer.mergeAll(
   DesktopVoiceInput.layer,
+  DesktopVoiceShortcut.layer,
+  DesktopVoiceRecording.layer,
   DesktopLifecycle.layer,
   layerDesktopAppActivation,
   DesktopWebLinks.layer,

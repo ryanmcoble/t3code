@@ -7,9 +7,16 @@ import { Switch } from "../ui/switch";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { useAtomValue } from "@effect/atom-react";
+import { primaryServerKeybindingsAtom } from "~/state/server";
+import { shortcutLabelForCommand } from "~/keybindings";
 
 export function VoiceInputSettings() {
   const settings = useClientSettings((value) => value.voiceInput);
+  const globalShortcutLabel = shortcutLabelForCommand(
+    useAtomValue(primaryServerKeybindingsAtom),
+    "composer.globalDictation",
+  );
   const [status, setStatus] = useState<string | null>(null);
   const [operation, setOperation] = useState<AbortController | null>(null);
   const native = window.desktopBridge?.getClientPlatform() === "darwin";
@@ -64,6 +71,43 @@ export function VoiceInputSettings() {
       />
       {settings.engine !== "off" ? (
         <>
+          <SettingsRow
+            {...searchableSetting("voice-input-global-shortcut")}
+            description={`Use ${globalShortcutLabel ?? "the global dictation shortcut"} from other apps on this Mac. Audio goes to the selected T3 composer without switching apps. Change it under Keyboard shortcuts.`}
+            control={
+              <Switch
+                checked={settings.globalShortcut}
+                disabled={!native}
+                onCheckedChange={(checked) => update({ globalShortcut: checked })}
+                aria-label="System-wide dictation shortcut"
+              />
+            }
+          />
+          <SettingsRow
+            {...searchableSetting("voice-input-shortcut-mode")}
+            description={
+              settings.shortcutMode === "hold"
+                ? "Hold the global shortcut while speaking. Release it to transcribe and send. Wait for recording to start before speaking."
+                : "Press the global shortcut to start or finish dictation. Enter in the T3 composer transcribes and sends."
+            }
+            control={
+              <Select
+                value={settings.shortcutMode}
+                onValueChange={(shortcutMode) => {
+                  if (shortcutMode === "toggle" || shortcutMode === "hold")
+                    update({ shortcutMode });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Dictation shortcut mode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="toggle">Press to toggle</SelectItem>
+                  <SelectItem value="hold">Hold to talk</SelectItem>
+                </SelectPopup>
+              </Select>
+            }
+          />
           <SettingsRow
             {...searchableSetting("voice-input-send-on-enter")}
             description="Press Enter in the composer while recording to transcribe and send. Turn off to leave the text in your draft. The stop button always leaves the text for review."

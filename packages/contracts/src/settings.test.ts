@@ -301,6 +301,19 @@ describe("ClientSettings voice input", () => {
       apiKey: "",
     };
     expect(decodeClientSettings({}).voiceInput.sendOnEnter).toBe(true);
+    expect(decodeClientSettings({}).snapShotRegionCapture).toBe(false);
+    expect(decodeClientSettings({ voiceInput: legacyVoice }).voiceInput).toMatchObject({
+      globalShortcut: true,
+      shortcutMode: "hold",
+    });
+    expect(
+      decodeClientSettings({
+        voiceInput: { ...legacyVoice, globalShortcut: false, shortcutMode: "toggle" },
+      }).voiceInput,
+    ).toMatchObject({ globalShortcut: false, shortcutMode: "toggle" });
+    expect(decodeClientSettingsPatch({ snapShotRegionCapture: true }).snapShotRegionCapture).toBe(
+      true,
+    );
     expect(decodeClientSettings({ voiceInput: legacyVoice }).voiceInput).toMatchObject({
       ...legacyVoice,
       sendOnEnter: true,

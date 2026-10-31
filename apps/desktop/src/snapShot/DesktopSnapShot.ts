@@ -44,7 +44,11 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { startGlobalShiftShortcutProcess } from "./GlobalShiftShortcutProcess.ts";
 import { startMacModifierPairShortcutProcess } from "./MacModifierPairShortcutProcess.ts";
 import { activeWindow, type ActiveWindow } from "./ActiveWindow.ts";
-import { captureMacWindowSnapshot, type MacSnapShotSource } from "./MacSnapShot.ts";
+import {
+  captureMacWindowSnapshot,
+  captureMacRegionSnapshot,
+  type MacSnapShotSource,
+} from "./MacSnapShot.ts";
 import type { LinuxCaptureFeedback, LinuxWindowMetadata } from "./LinuxSnapShot.ts";
 import { niriSocketPath } from "./NiriSnapShot.ts";
 import { CaptureShortcutConfig, niriCaptureConfigPath } from "./CaptureShortcutConfig.ts";
@@ -129,6 +133,7 @@ const DesktopSnapShotOperation = Schema.Literals([
   "no-window-selected",
   "window-unavailable",
   "capture",
+  "cancelled",
 ]);
 
 export class DesktopSnapShotError extends Schema.TaggedError<DesktopSnapShotError>()(
@@ -157,6 +162,8 @@ export class DesktopSnapShotError extends Schema.TaggedError<DesktopSnapShotErro
         return "The active window is not available for capture.";
       case "capture":
         return "Could not capture the active window.";
+      case "cancelled":
+        return "Snapshot selection cancelled.";
     }
   }
 }
@@ -440,6 +447,7 @@ async function captureSource({
   regionSnapShotPool,
   prepareReveal,
   onLinuxFeedback,
+  signal,
 }: {
   mode: DesktopSnapShotState["mode"];
   captureId: string;
@@ -455,6 +463,7 @@ async function captureSource({
   regionSnapShotPool: RegionSnapShotPool;
   prepareReveal: () => Promise<void>;
   onLinuxFeedback: (feedback: LinuxCaptureFeedback) => void;
+  signal: AbortSignal;
 }) {
   let active: ActiveWindow | undefined;
   let linuxWindow: LinuxWindowMetadata | undefined;
@@ -467,7 +476,7 @@ async function captureSource({
   {
     const revealPreparation =
       platform === "win32" ? prepareReveal().catch(() => undefined) : Promise.resolve();
-    if (mode === "direct") {
+    if (mode === "direct" && !(platform === "darwin" && settings.snapShotRegionCapture)) {
       active = await activeWindow(platform);
     }
 
@@ -475,14 +484,26 @@ async function captureSource({
     let png: Buffer;
     let imageTempReady = false;
     if (platform === "darwin") {
-      if (!active) {
-        throw new DesktopSnapShotError({ operation: "window-unavailable", captureId });
+      if (settings.snapShotRegionCapture) {
+        const selection = await captureMacRegionSnapshot(
+          imageTempPath,
+          { width: MAX_CAPTURE_WIDTH, height: MAX_CAPTURE_HEIGHT },
+          signal,
+        );
+        if (!selection) throw new DesktopSnapShotError({ operation: "cancelled", captureId });
+        png = selection;
+        source = { name: "Selected region" };
+        active = undefined;
+      } else {
+        if (!active) {
+          throw new DesktopSnapShotError({ operation: "window-unavailable", captureId });
+        }
+        ({ source, png } = await captureMacWindowSnapshot(
+          active,
+          imageTempPath,
+          snapShotThumbnailSize(active),
+        ));
       }
-      ({ source, png } = await captureMacWindowSnapshot(
-        active,
-        imageTempPath,
-        snapShotThumbnailSize(active),
-      ));
       imageTempReady = true;
     } else if (mode === "direct") {
       if (!active) {
@@ -684,6 +705,7 @@ async function showCaptureFeedback(
 ): Promise<boolean> {
   // Wayland does not let this client position overlays on another app's window.
   if (platform === "linux") return false;
+  if (platform === "darwin" && settings.snapShotRegionCapture) return false;
   const bounds = snapShotFlashBounds(active, platform);
   const animationsEnabled =
     settings.snapShotAnimations &&
@@ -747,6 +769,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
+  const captureLifetime = yield* Effect.abortSignal;
   const settingsRef = yield* Ref.make(DEFAULT_CLIENT_SETTINGS);
   const stateRef = yield* Ref.make<DesktopSnapShotState>({
     mode: captureMode(environment.platform),
@@ -907,7 +930,7 @@ export const make = Effect.gen(function* () {
       yield* fileSystem.makeDirectory(captureDirectory, { recursive: true });
       yield* emit({ type: "requested", id: id as DesktopSnapShotId });
       const snapshot = yield* Effect.tryPromise({
-        try: () =>
+        try: (signal) =>
           captureSource({
             mode,
             captureId: id,
@@ -921,6 +944,7 @@ export const make = Effect.gen(function* () {
             hyprlandCapturePaths,
             accessibilityProcessPool,
             regionSnapShotPool,
+            signal: AbortSignal.any([signal, captureLifetime]),
             prepareReveal: () => runPromise(desktopWindow.prepareCaptureReveal),
             onLinuxFeedback: (feedback) => {
               linuxFeedback = { id, feedback };
@@ -1006,7 +1030,15 @@ export const make = Effect.gen(function* () {
     const prepared = yield* prepareCapture(settings).pipe(
       Effect.tapError((error) =>
         (error.captureId ? discardCapture(error.captureId) : Effect.void).pipe(
-          Effect.andThen(setFailure(error.message, error.captureId)),
+          Effect.andThen(
+            error.operation === "cancelled" && error.captureId
+              ? Ref.update(stateRef, (state) => ({ ...state, message: null })).pipe(
+                  Effect.andThen(
+                    emit({ type: "cancelled", id: error.captureId as DesktopSnapShotId }),
+                  ),
+                )
+              : setFailure(error.message, error.captureId),
+          ),
         ),
       ),
       snapshotMutex.withPermitsIfAvailable(1),
@@ -1117,6 +1149,7 @@ export const make = Effect.gen(function* () {
     if (
       settings.snapShotEnabled &&
       settings.snapShotIncludeAccessibility &&
+      !(environment.platform === "darwin" && settings.snapShotRegionCapture) &&
       mode !== "unavailable"
     ) {
       accessibilityProcessPool.warm();
@@ -1139,6 +1172,7 @@ export const make = Effect.gen(function* () {
     const shortcutInputsChanged =
       settings.snapShotEnabled !== previousSettings.snapShotEnabled ||
       settings.snapShotIncludeAccessibility !== previousSettings.snapShotIncludeAccessibility ||
+      settings.snapShotRegionCapture !== previousSettings.snapShotRegionCapture ||
       !sameSnapShotShortcut(shortcut, previousSettings.snapShotShortcut);
     const portalShortcutUnchanged =
       portalShortcut !== undefined &&
@@ -1180,7 +1214,9 @@ export const make = Effect.gen(function* () {
     const permissionMessage =
       requestedPermissionMessage ??
       (environment.platform === "darwin"
-        ? currentMacSnapShotPermissionMessage(settings.snapShotIncludeAccessibility)
+        ? currentMacSnapShotPermissionMessage(
+            settings.snapShotIncludeAccessibility && !settings.snapShotRegionCapture,
+          )
         : null);
     if (permissionMessage) {
       yield* Ref.set(stateRef, {
@@ -1597,7 +1633,10 @@ export const make = Effect.gen(function* () {
                 const settings = yield* Ref.get(settingsRef);
                 const macPermissions = currentMacPermissions();
                 const message = settings.snapShotEnabled
-                  ? macPermissionMessage(macPermissions, settings.snapShotIncludeAccessibility)
+                  ? macPermissionMessage(
+                      macPermissions,
+                      settings.snapShotIncludeAccessibility && !settings.snapShotRegionCapture,
+                    )
                   : null;
                 const recovered =
                   message === null &&

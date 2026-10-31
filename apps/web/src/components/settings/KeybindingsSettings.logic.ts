@@ -358,6 +358,7 @@ export function buildKeybindingCommandOptions(
 
 export function commandLabel(command: KeybindingCommand): string {
   if (command === "composer.dictation") return "Composer: Start or Finish Dictation";
+  if (command === "composer.globalDictation") return "Composer: System-wide Dictation";
   if (command === "workspace.focusNext") return "Focus Next Workspace Area";
   if (command === "workspace.focusPrevious") return "Focus Previous Workspace Area";
   if (command === "composer.sendAlternate") return "Composer: Opposite Queue or Steer Action";

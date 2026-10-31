@@ -29,6 +29,13 @@ is open it starts a draft in the current project.
 
 Pressing the shortcut while T3 Code is in front captures T3 Code itself.
 
+On Mac, turn on **Select a region for screenshots** in **Settings → SnapShots** to
+drag a rectangle anywhere on your displays instead of capturing a whole window.
+The selected image attaches directly to the current T3 draft, including when its
+agent runs on another machine. Press Escape to cancel without adding an attachment.
+Region captures contain the selected pixels only; app text, window flash, and the
+window animation are unavailable in this mode.
+
 Pending captures are kept on disk until the attachment is saved to the draft, so a capture survives
 closing the app mid-way and is attached on the next launch. Captures rejected because the image is
 too large are discarded.

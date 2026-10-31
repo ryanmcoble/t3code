@@ -15,7 +15,12 @@ import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
 import type { PreviewForwardedShortcut } from "./keybindings.ts";
-import type { DesktopVoiceInputRequest, DesktopVoiceInputResult } from "./voiceInput.ts";
+import type {
+  DesktopVoiceInputRequest,
+  DesktopVoiceInputResult,
+  DesktopVoiceShortcutConfig,
+  DesktopVoiceShortcutEvent,
+} from "./voiceInput.ts";
 
 import type {
   DesktopAppActivationRequest,
@@ -217,6 +222,7 @@ export const DesktopSnapShotEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("requested"), id: DesktopSnapShotId }),
   Schema.Struct({ type: Schema.Literal("started"), id: DesktopSnapShotId }),
   Schema.Struct({ type: Schema.Literal("ready"), id: DesktopSnapShotId }),
+  Schema.Struct({ type: Schema.Literal("cancelled"), id: DesktopSnapShotId }),
   Schema.Struct({ type: Schema.Literal("failed"), id: Schema.optional(DesktopSnapShotId) }),
   Schema.Struct({ type: Schema.Literal("shortcut-changed") }),
 ]);
@@ -1016,6 +1022,11 @@ export interface DesktopBridge {
   voiceInput: {
     run: (request: DesktopVoiceInputRequest) => Promise<DesktopVoiceInputResult>;
     cancel: (id: string) => Promise<void>;
+    configureShortcut: (config: DesktopVoiceShortcutConfig) => Promise<void>;
+    prepareRecording: (id: string) => Promise<void>;
+    finishRecording: (id: string) => Promise<Uint8Array>;
+    cancelRecording: (id: string) => Promise<void>;
+    onShortcut: (listener: (event: DesktopVoiceShortcutEvent) => void) => () => void;
   };
   getAppBranding: () => DesktopAppBranding | null;
   getRelayTelemetryEnabled: () => boolean;

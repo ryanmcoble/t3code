@@ -599,6 +599,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["voice transcription microphone speech enter return send dictation automatic"],
   },
   {
+    id: "voice-input-global-shortcut",
+    title: "System-wide dictation shortcut",
+    to: "/settings/chat",
+    searchTerms: ["global hotkey microphone voice other apps background"],
+  },
+  {
+    id: "voice-input-shortcut-mode",
+    title: "Dictation shortcut mode",
+    to: "/settings/chat",
+    searchTerms: ["hold push to talk release toggle microphone voice hotkey"],
+  },
+  {
     id: "follow-up-behavior",
     title: "Follow-up behavior",
     to: "/settings/chat",
@@ -771,6 +783,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "SnapShots",
     searchTerms: ["window capture screenshot"],
     to: "/settings/snap-shot",
+  },
+  {
+    id: "snap-shot-region",
+    title: "Select a region for screenshots",
+    to: "/settings/snap-shot",
+    searchTerms: ["screenshot rectangle drag crop region selection capture"],
   },
   {
     id: "snap-shot-accessibility",

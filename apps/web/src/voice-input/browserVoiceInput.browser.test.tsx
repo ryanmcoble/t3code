@@ -12,8 +12,13 @@ import {
 } from "../components/ComposerPromptEditorTiptap";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { __setClientSettingsForTests } from "../hooks/useSettings";
+import type {
+  DesktopBridge,
+  DesktopVoiceShortcutConfig,
+  DesktopVoiceShortcutEvent,
+} from "@t3tools/contracts";
 
-function setup(sendOnEnter = true) {
+function setup(sendOnEnter = true, shortcutMode: "toggle" | "hold" = "toggle") {
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     voiceInput: {
@@ -22,8 +27,64 @@ function setup(sendOnEnter = true) {
       serverUrl: "http://speech.test/v1",
       model: "local-speech-model",
       sendOnEnter,
+      shortcutMode,
     },
   });
+}
+
+function globalShortcutFixture(
+  prepare: () => Promise<void> = async () => {},
+  cancel: () => void = () => {},
+) {
+  const original = window.desktopBridge;
+  let listener: ((event: DesktopVoiceShortcutEvent) => void) | undefined;
+  let ownerKey = "";
+  let configured!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    configured = resolve;
+  });
+  const finishRecording = vi.fn(async () => encodeVoiceWav([new Float32Array(1600)], 16000));
+  window.desktopBridge = {
+    getClientPlatform: () => "darwin",
+    getSystemLocale: () => "en-US",
+    voiceInput: {
+      configureShortcut: async (config: DesktopVoiceShortcutConfig) => {
+        if (config.enabled) {
+          ownerKey = config.ownerKey;
+          configured();
+        }
+      },
+      onShortcut: (next: (event: DesktopVoiceShortcutEvent) => void) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+      run: async () => ({
+        available: true,
+        installed: true,
+        locale: "en-US",
+        text: "spoken text",
+        models: [],
+      }),
+      cancel: async () => {},
+      prepareRecording: prepare,
+      finishRecording,
+      cancelRecording: async () => {
+        cancel();
+      },
+    },
+  } as unknown as DesktopBridge;
+  return {
+    ready,
+    finishRecording,
+    press: () => listener?.({ ownerKey, type: "pressed" }),
+    release: () => listener?.({ ownerKey, type: "released" }),
+    [Symbol.dispose]: () => {
+      if (original) window.desktopBridge = original;
+      else delete window.desktopBridge;
+    },
+  };
 }
 
 function ComposerHarness({
@@ -382,3 +443,64 @@ it.each([
     expect(recorder.stop).toHaveBeenCalledTimes(1);
   },
 );
+
+it.each(["toggle", "hold"] as const)(
+  "receives the system-wide shortcut with %s behavior while the composer is unfocused",
+  async (mode) => {
+    setup(true, mode);
+    using bridge = globalShortcutFixture();
+    using recorder = recorderFixture();
+    await using screen = await render(<ComposerHarness realEditor />);
+    using _permission = vi
+      .spyOn(navigator.permissions, "query")
+      .mockResolvedValue({ state: "granted" } as PermissionStatus);
+    using _microphone = vi
+      .spyOn(navigator.mediaDevices, "getUserMedia")
+      .mockResolvedValue(recorder.stream);
+    await bridge.ready;
+    (document.activeElement as HTMLElement)?.blur();
+    bridge.press();
+    bridge.press();
+    await expect.element(screen.getByRole("button", { name: "Finish dictation" })).toBeVisible();
+    bridge.release();
+    if (mode === "toggle") {
+      await expect.element(screen.getByRole("button", { name: "Finish dictation" })).toBeVisible();
+      await screen.getByRole("textbox", { name: "Message" }).click();
+      await userEvent.keyboard("{Enter}");
+    }
+    await expect
+      .element(screen.getByRole("status", { name: "Sent message" }))
+      .toHaveTextContent("before spoken text after");
+    await expect.element(screen.getByRole("status", { name: "Send count" })).toHaveTextContent("1");
+    expect(bridge.finishRecording).toHaveBeenCalledTimes(1);
+    expect(_microphone).not.toHaveBeenCalled();
+  },
+);
+
+it("cancels push-to-talk released before native microphone preparation finishes", async () => {
+  setup(true, "hold");
+  let reject!: (cause: Error) => void;
+  const permission = new Promise<void>((_resolve, fail) => {
+    reject = fail;
+  });
+  const prepare = vi.fn(() => permission);
+  const cancel = vi.fn(() => reject(new Error("Recording cancelled")));
+  using bridge = globalShortcutFixture(prepare, cancel);
+  using recorder = recorderFixture();
+  await using screen = await render(<ComposerHarness />);
+  using _permission = vi
+    .spyOn(navigator.permissions, "query")
+    .mockResolvedValue({ state: "granted" } as PermissionStatus);
+  using microphone = vi
+    .spyOn(navigator.mediaDevices, "getUserMedia")
+    .mockResolvedValue(recorder.stream);
+  await bridge.ready;
+  bridge.press();
+  await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+  bridge.release();
+  await vi.waitFor(() => expect(cancel).toHaveBeenCalled());
+  expect(microphone).not.toHaveBeenCalled();
+  expect(bridge.finishRecording).not.toHaveBeenCalled();
+  await expect.element(screen.getByRole("status", { name: "Send count" })).toHaveTextContent("0");
+  await expect.element(screen.getByRole("button", { name: "Start dictation" })).toBeVisible();
+});
