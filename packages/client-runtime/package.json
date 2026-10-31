@@ -522,6 +522,10 @@
     "./state/setupProfiles": {
       "types": "./src/state/setupProfiles.ts",
       "default": "./src/state/setupProfiles.ts"
+    },
+    "./state/shared-capabilities": {
+      "types": "./src/state/sharedCapabilities.ts",
+      "default": "./src/state/sharedCapabilities.ts"
     }
   },
   "scripts": {

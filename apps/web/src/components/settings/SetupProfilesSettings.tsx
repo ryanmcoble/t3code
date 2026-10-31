@@ -4,6 +4,8 @@ import { SetupProfileEnrollment } from "./SetupProfileEnrollment";
 import { useAtomValue } from "@effect/atom-react";
 import {
   SetupMcpConnection,
+  MemoryScopeReference,
+  ComputerUseProfilePolicy,
   type SetupProfile,
   type EnvironmentId,
   ProviderInstanceId,
@@ -28,6 +30,13 @@ const decodeConnections = Schema.decodeUnknownSync(
   Schema.fromJsonString(Schema.Array(SetupMcpConnection)),
 );
 
+const ProfilePolicy = Schema.Struct({
+  memoryScopes: Schema.Array(MemoryScopeReference),
+  computerUse: Schema.NullOr(ComputerUseProfilePolicy),
+});
+const encodePolicy = Schema.encodeSync(Schema.fromJsonString(ProfilePolicy));
+const decodePolicy = Schema.decodeUnknownSync(Schema.fromJsonString(ProfilePolicy));
+
 export function SetupProfilesSettings({
   environmentId,
   label,
@@ -49,6 +58,9 @@ export function SetupProfilesSettings({
   const [name, setName] = useState("Development setup");
   const [connections, setConnections] = useState("[]");
   const [skillPaths, setSkillPaths] = useState("");
+  const [policyText, setPolicyText] = useState(
+    encodePolicy({ memoryScopes: [], computerUse: null }),
+  );
   const [skills, setSkills] = useState<SetupProfile["skills"]>([]);
   const [instanceId, setInstanceId] = useState("");
   const [selectedIds, setInstanceIds] = useState<ReadonlyArray<string> | null>(null);
@@ -91,6 +103,12 @@ export function SetupProfilesSettings({
     setName(profile?.name ?? "Development setup");
     setConnections(profile ? encodeConnections(profile.connections) : "[]");
     setSkills(profile?.skills ?? []);
+    setPolicyText(
+      encodePolicy({
+        memoryScopes: profile?.memoryScopes ?? [],
+        computerUse: profile?.computerUse ?? null,
+      }),
+    );
     setEditorOpen(true);
   };
   if (!supported)
@@ -377,6 +395,18 @@ export function SetupProfilesSettings({
             >
               Import selected setup
             </Button>
+            <details>
+              <summary>Shared memory and desktop policy</summary>
+              <p className="text-xs text-muted-foreground">
+                Memory references identify the owner and scope; each destination still chooses its
+                projects and grants access. Desktop policy applies where no local override exists.
+              </p>
+              <Textarea
+                aria-label="Profile memory and desktop policy"
+                value={policyText}
+                onChange={(e) => setPolicyText(e.target.value)}
+              />
+            </details>
             <SetupMcpEditor value={connections} onChange={setConnections} />
             {skills.map((skill) => (
               <div key={skill.name} className="flex items-center justify-between gap-3 text-sm">
@@ -399,8 +429,10 @@ export function SetupProfilesSettings({
             <Button
               onClick={async () => {
                 let parsed: ReadonlyArray<SetupMcpConnection>;
+                let policy: typeof ProfilePolicy.Type;
                 try {
                   parsed = decodeConnections(connections);
+                  policy = decodePolicy(policyText);
                 } catch {
                   setError("The MCP connection definitions are invalid.");
                   return;
@@ -414,6 +446,8 @@ export function SetupProfilesSettings({
                       expectedRevision: editing?.revision ?? 0,
                       connections: parsed,
                       skills,
+                      memoryScopes: policy.memoryScopes,
+                      ...(policy.computerUse ? { computerUse: policy.computerUse } : {}),
                     },
                   })
                 )

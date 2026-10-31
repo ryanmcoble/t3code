@@ -594,6 +594,8 @@ const make = Effect.gen(function* () {
               schemaVersion: 1,
               connections: input.profile.connections,
               skills: input.profile.skills,
+              ...(input.profile.memoryScopes ? { memoryScopes: input.profile.memoryScopes } : {}),
+              ...(input.profile.computerUse ? { computerUse: input.profile.computerUse } : {}),
             },
             input.profile.expectedRevision,
           );

@@ -1,3 +1,5 @@
+import * as ComputerUse from "./computer/ComputerUse.ts";
+import * as SharedMemory from "./memory/SharedMemory.ts";
 import * as SetupProfiles from "./setupProfiles/SetupProfiles.ts";
 import * as ProjectFolderTransfer from "./project/ProjectFolderTransfer.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
@@ -1343,6 +1345,8 @@ export const layerWsRpc = (
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const folderTransfer = yield* ProjectFolderTransfer.ProjectFolderTransfer;
       const setupProfiles = yield* SetupProfiles.SetupProfiles;
+      const memory = yield* SharedMemory.SharedMemory;
+      const computer = yield* ComputerUse.ComputerUse;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -2501,6 +2505,13 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
         [WS_METHODS.setupProfilesSubscribe]: () => setupProfiles.changes,
+        [WS_METHODS.computerUseState]: () => computer.state,
+        [WS_METHODS.computerUseCommand]: (input) => computer.command(input),
+        [WS_METHODS.memoryState]: () => memory.state,
+        [WS_METHODS.memoryQuery]: (input) => memory.query(input, { kind: "user" }),
+        [WS_METHODS.memoryCommand]: (input) => memory.command(input),
+        [WS_METHODS.memoryExport]: (input) => memory.exportScope(input.scopeId),
+        [WS_METHODS.memoryGrant]: (input) => memory.grant(input),
         [WS_METHODS.setupProfilesState]: () => setupProfiles.state,
         [WS_METHODS.setupProfilesCommand]: (input) => setupProfiles.command(input),
         [WS_METHODS.setupProfilesImport]: (input) => setupProfiles.importSetup(input),

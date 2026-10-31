@@ -1,3 +1,5 @@
+import * as ComputerUse from "./computer/ComputerUse.ts";
+import * as SharedMemory from "./memory/SharedMemory.ts";
 import * as SetupProfiles from "./setupProfiles/SetupProfiles.ts";
 import * as ProjectFolderTransfer from "./project/ProjectFolderTransfer.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -551,6 +553,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(ProjectFolderTransfer.ProjectFolderTransfer)({}),
   Layer.mock(SetupProfiles.SetupProfiles)({}),
+  Layer.mock(SharedMemory.SharedMemory)({}),
+  Layer.mock(ComputerUse.ComputerUse)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
 );
 

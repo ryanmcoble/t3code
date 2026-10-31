@@ -2,6 +2,8 @@ import * as Schema from "effect/Schema";
 
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { MemoryScopeReference } from "./sharedMemory.ts";
+import { ComputerUseProfilePolicy } from "./computerUse.ts";
 
 const Name = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 const SecretName = Name.check(Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/));
@@ -48,6 +50,8 @@ export const SetupProfile = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   connections: Schema.Array(SetupMcpConnection),
   skills: Schema.Array(SetupSkill),
+  memoryScopes: Schema.optionalKey(Schema.Array(MemoryScopeReference)),
+  computerUse: Schema.optionalKey(ComputerUseProfilePolicy),
 });
 export type SetupProfile = typeof SetupProfile.Type;
 
@@ -105,6 +109,8 @@ export const SetupProfilePublishInput = Schema.Struct({
   expectedRevision: Revision,
   connections: Schema.Array(SetupMcpConnection),
   skills: Schema.Array(SetupSkill),
+  memoryScopes: Schema.optionalKey(Schema.Array(MemoryScopeReference)),
+  computerUse: Schema.optionalKey(ComputerUseProfilePolicy),
 });
 export type SetupProfilePublishInput = typeof SetupProfilePublishInput.Type;
 

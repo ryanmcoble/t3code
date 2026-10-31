@@ -1,3 +1,7 @@
+import * as ComputerUse from "./computer/ComputerUse.ts";
+import * as ComputerDriver from "./computer/ComputerDriver.ts";
+import * as SharedMemory from "./memory/SharedMemory.ts";
+import * as MemoryHttp from "./memory/http.ts";
 import * as SetupProfiles from "./setupProfiles/SetupProfiles.ts";
 import * as SetupProfileStore from "./setupProfiles/SetupProfileStore.ts";
 import * as SetupPackages from "./setupProfiles/SetupPackages.ts";
@@ -490,6 +494,20 @@ const layerServerEnvironment = ServerEnvironment.layer.pipe(Layer.provide(Server
 
 const layerAuth = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(
+    ComputerUse.layer.pipe(
+      Layer.provide(ComputerDriver.layer.pipe(Layer.provide(ProcessRunner.layer))),
+      Layer.provide(layerServerSettings),
+      Layer.provide(SetupProfileStore.layer),
+    ),
+  ),
+  Layer.provideMerge(
+    SharedMemory.layer.pipe(
+      Layer.provide(layerServerEnvironment),
+      Layer.provide(ServerSecretStore.layer),
+      Layer.provide(SetupProfileStore.layer),
+    ),
+  ),
+  Layer.provideMerge(
     SetupProfiles.layer.pipe(
       Layer.provideMerge(SetupFiles.layer),
       Layer.provideMerge(SetupPackages.layer),
@@ -752,6 +770,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
     SetupProfileHttp.layer,
+    MemoryHttp.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,

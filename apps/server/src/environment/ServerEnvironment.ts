@@ -218,6 +218,8 @@ export const make = Effect.gen(function* () {
     ...(databaseMigration === undefined ? {} : { databaseMigration }),
     capabilities: {
       setupProfiles: 1,
+      sharedMemory: 1,
+      computerUse: 1,
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,
