@@ -7,6 +7,7 @@ import {
   MemoryExport,
   MemoryGrantInput,
   MemoryGrantResult,
+  MemoryThreadStatus,
   SharedMemoryError,
 } from "./sharedMemory.ts";
 import {
@@ -76,7 +77,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString, ThreadId } from "./baseSchemas.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -559,6 +560,7 @@ export const WS_METHODS = {
   computerUseState: "computerUse.state",
   computerUseCommand: "computerUse.command",
   memoryState: "memory.state",
+  memoryStatus: "memory.status",
   memoryQuery: "memory.query",
   memoryCommand: "memory.command",
   memoryExport: "memory.export",
@@ -868,6 +870,11 @@ const WsComputerUseCommandRpc = Rpc.make(WS_METHODS.computerUseCommand, {
 const WsMemoryStateRpc = Rpc.make(WS_METHODS.memoryState, {
   payload: Schema.Struct({}),
   success: MemoryState,
+  error: Schema.Union([SharedMemoryError, EnvironmentAuthorizationError]),
+});
+const WsMemoryStatusRpc = Rpc.make(WS_METHODS.memoryStatus, {
+  payload: Schema.Struct({ threadId: ThreadId, activityKey: Schema.optionalKey(Schema.String) }),
+  success: MemoryThreadStatus,
   error: Schema.Union([SharedMemoryError, EnvironmentAuthorizationError]),
 });
 const WsMemoryQueryRpc = Rpc.make(WS_METHODS.memoryQuery, {
@@ -2163,6 +2170,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsComputerUseStateRpc,
   WsComputerUseCommandRpc,
   WsMemoryStateRpc,
+  WsMemoryStatusRpc,
   WsMemoryQueryRpc,
   WsMemoryCommandRpc,
   WsMemoryExportRpc,

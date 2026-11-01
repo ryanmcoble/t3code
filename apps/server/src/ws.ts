@@ -2508,6 +2508,7 @@ export const layerWsRpc = (
         [WS_METHODS.computerUseState]: () => computer.state,
         [WS_METHODS.computerUseCommand]: (input) => computer.command(input),
         [WS_METHODS.memoryState]: () => memory.state,
+        [WS_METHODS.memoryStatus]: (input) => memory.status(input.threadId),
         [WS_METHODS.memoryQuery]: (input) => memory.query(input, { kind: "user" }),
         [WS_METHODS.memoryCommand]: (input) => memory.command(input),
         [WS_METHODS.memoryExport]: (input) => memory.exportScope(input.scopeId),

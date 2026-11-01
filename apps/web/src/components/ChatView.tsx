@@ -1,3 +1,4 @@
+import { ThreadMemoryStatus } from "./ThreadMemoryStatus";
 import { useAddProjectTargets } from "../hooks/useAddProjectTargets";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -3277,6 +3278,13 @@ export default function ChatView(props: ChatViewProps) {
             {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
           />
         </header>
+        {routeKind === "server" ? (
+          <ThreadMemoryStatus
+            environmentId={environmentId}
+            threadId={threadId}
+            activityKey={`${activeLatestRun?.runId ?? "none"}:${activeRuntime ? "active" : "idle"}`}
+          />
+        ) : null}
 
         <div className="relative flex min-h-0 min-w-0 flex-1">
           <ThreadFindCanvas

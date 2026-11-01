@@ -1,3 +1,4 @@
+import { ThreadMemoryStatus } from "./ThreadMemoryStatus";
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
@@ -1353,6 +1354,11 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                 ? "absolute inset-0 bg-thread-canvas"
                 : "absolute inset-0 bg-screen"
             }
+          />
+          <ThreadMemoryStatus
+            environmentId={props.environmentId}
+            threadId={props.selectedThread.id}
+            activityKey={`${props.activityRun?.runId ?? "none"}:${props.activeWorkStartedAt ? "active" : "idle"}`}
           />
           <RenderErrorBoundary
             key={selectedThreadKey}

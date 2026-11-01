@@ -1,3 +1,4 @@
+import * as MemoryTurnObserver from "../memory/MemoryTurnObserver.ts";
 import { CheckpointScopeId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -52,6 +53,7 @@ const make = Effect.gen(function* () {
   const checkpointCapture = yield* CheckpointCapture.CheckpointCaptureServiceV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const observer = yield* RunFinalizationObserver;
+  const memoryObserver = yield* MemoryTurnObserver.MemoryTurnObserver;
 
   const finalize: RunFinalizationService["Service"]["finalize"] = Effect.fn(
     "RunFinalizationService.finalize",
@@ -63,6 +65,7 @@ const make = Effect.gen(function* () {
           (cause) => new RunFinalizationError({ ...input, operation: "capture-checkpoint", cause }),
         ),
       );
+    yield* memoryObserver.complete(input);
     const projection = yield* projections
       .getCheckpointContext(input.threadId)
       .pipe(

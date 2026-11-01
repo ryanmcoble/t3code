@@ -343,6 +343,8 @@ it.effect(
               "Failure",
             );
             online = true;
+            yield* memory.forget({ scopeId: scope.id, entryId: corrected.id }, remoteActor);
+            assert.equal((yield* owner.query(input, actor)).entries.length, 0);
             yield* memory.command({ operation: "disconnect", scopeId: scope.id });
             assert.equal((yield* memory.state).bindings.length, 0);
           }),
@@ -350,4 +352,424 @@ it.effect(
         );
       }),
     ),
+);
+
+it.effect(
+  "applies folder categories to new nested projects without matching siblings, escapes, exclusions or unauthorized providers",
+  () =>
+    withMemory(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const company = `${root}/company`;
+        const nested = `${company}/repository/src`;
+        const excluded = `${company}/private`;
+        const sibling = `${root}/company-other`;
+        const outside = `${root}/outside`;
+        for (const directory of [nested, excluded, sibling, outside])
+          yield* fs.makeDirectory(directory, { recursive: true });
+        yield* fs.symlink(outside, `${company}/linked-outside`);
+        const alias = `${root}/company-alias`;
+        yield* fs.symlink(company, alias);
+        const memory = yield* SharedMemory.SharedMemory;
+        yield* memory.command({
+          operation: "scope-save",
+          expectedRevision: 0,
+          scope: {
+            ...scope,
+            projectIds: [],
+            rules: [
+              { kind: "folder", path: alias, descendants: true, exclusions: [`${alias}/private`] },
+            ],
+          },
+        });
+        const canonicalCompany = yield* fs.realPath(company);
+        assert.deepEqual((yield* memory.state).scopes[0]?.rules?.[0], {
+          kind: "folder",
+          path: canonicalCompany,
+          descendants: true,
+          exclusions: [`${canonicalCompany}/private`],
+        });
+        yield* memory.command({ operation: "write", entry: note });
+        const newActor = {
+          ...actor,
+          projectId: ProjectId.make("new-project"),
+          cwd: nested,
+          projectRoot: `${company}/repository`,
+        };
+        assert.equal((yield* memory.available(newActor))[0]?.id, scope.id);
+        assert.equal(
+          (yield* memory.query({ scopeId: scope.id, query: "build", tokenBudget: 2048 }, newActor))
+            .entries[0]?.id,
+          note.id,
+        );
+        for (const cwd of [excluded, sibling, `${company}/linked-outside`, `${root}/missing`]) {
+          assert.deepEqual(yield* memory.available({ ...newActor, cwd, projectRoot: cwd }), []);
+        }
+        assert.deepEqual(
+          yield* memory.available({
+            ...newActor,
+            providerInstanceId: ProviderInstanceId.make("other-provider"),
+          }),
+          [],
+        );
+        yield* memory.command({
+          operation: "scope-save",
+          expectedRevision: 1,
+          scope: {
+            ...scope,
+            revision: 2,
+            projectIds: [],
+            rules: [{ kind: "folder", path: company, descendants: false, exclusions: [] }],
+          },
+        });
+        assert.deepEqual(yield* memory.available(newActor), []);
+        assert.equal((yield* memory.available({ ...newActor, cwd: company }))[0]?.id, scope.id);
+      }),
+    ),
+);
+
+it.effect(
+  "recalls before model tool choice with a shared budget, pinned preferences, corrections, expiry and temporary-thread controls",
+  () =>
+    withMemory(
+      Effect.gen(function* () {
+        const memory = yield* SharedMemory.SharedMemory;
+        const contracts = yield* Effect.promise(() => import("@t3tools/contracts"));
+        const providers = ["codex", "claude", "openrouter-claude", "opencode", "copilot"].map(
+          (value) => ProviderInstanceId.make(value),
+        );
+        yield* memory.command({
+          operation: "scope-save",
+          expectedRevision: 0,
+          scope: {
+            ...scope,
+            providerInstanceIds: providers,
+            writableProviderInstanceIds: providers,
+          },
+        });
+        yield* memory.command({
+          operation: "settings-save",
+          expectedRevision: 0,
+          settings: {
+            ...contracts.DEFAULT_MEMORY_SETTINGS,
+            revision: 1,
+            recallEnabled: true,
+            tokenBudget: 1024,
+          },
+        });
+        yield* memory.command({
+          operation: "write",
+          entry: {
+            ...note,
+            kind: "preference",
+            pinned: true,
+            content: "Use inexpensive harness smoke tests.",
+          },
+        });
+        yield* memory.command({
+          operation: "write",
+          entry: { ...note, id: "expired", expiresAt: "1960-01-01T00:00:00Z" },
+        });
+        for (const providerInstanceId of providers) {
+          const context = {
+            threadId: actor.threadId,
+            projectId: project,
+            providerInstanceId,
+            cwd: "/unresolved",
+            projectRoot: "/unresolved",
+          };
+          const text = yield* memory.recall({
+            id: `recall-${providerInstanceId}`,
+            context,
+            text: "An unrelated task",
+          });
+          assert.include(text, "Use inexpensive harness smoke tests.");
+          assert.notInclude(text, '"expired"');
+          const receipt = (yield* memory.state).receipts?.find(
+            (value) => value.id === `recall-${providerInstanceId}`,
+          );
+          assert.equal(receipt?.categories[0]?.id, scope.id);
+          assert.isAtMost(receipt!.estimatedTokens, 1024);
+        }
+        yield* memory.command({
+          operation: "write",
+          entry: {
+            ...note,
+            id: "fixed",
+            pinned: true,
+            content: "Use the least expensive compatible smoke-test model.",
+            supersedes: note.id,
+          },
+        });
+        const context = {
+          threadId: actor.threadId,
+          projectId: project,
+          providerInstanceId: providers[0]!,
+          cwd: "/unresolved",
+          projectRoot: "/unresolved",
+        };
+        const corrected = yield* memory.recall({ id: "corrected", context, text: "smoke" });
+        assert.include(corrected, "least expensive compatible");
+        assert.notInclude(corrected, "Use inexpensive harness smoke tests.");
+        yield* memory.command({
+          operation: "thread-policy-save",
+          policy: { threadId: actor.threadId, recall: false, learn: false },
+        });
+        assert.equal(yield* memory.recall({ id: "private", context, text: "smoke" }), "");
+        assert.equal(
+          (yield* memory.state).receipts?.find((value) => value.id === "private")?.status,
+          "disabled",
+        );
+      }),
+    ),
+);
+
+it.effect(
+  "queues bounded local extraction, reviews supported suggestions, deduplicates retries and enforces a daily reservation",
+  () => {
+    let calls = 0;
+    const client = HttpClient.make((request) =>
+      Effect.sync(() => {
+        calls++;
+        assert.equal(request.url, "http://127.0.0.1:11434/api/chat");
+        assert.equal(request.body._tag, "Uint8Array");
+        if (request.body._tag === "Uint8Array")
+          assert.include(new TextDecoder().decode(request.body.body), '"think":false');
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            message: {
+              content: JSON.stringify({
+                memories: [
+                  {
+                    kind: "preference",
+                    title: "Handoffs",
+                    content: "User prefers short handoffs.",
+                    quote: "I prefer short handoffs.",
+                  },
+                  {
+                    kind: "preference",
+                    title: "Unsupported",
+                    content: "User prefers premium models.",
+                    quote: "I prefer premium models.",
+                  },
+                ],
+              }),
+            },
+          }),
+        );
+      }),
+    );
+    return withMemory(
+      Effect.gen(function* () {
+        const memory = yield* SharedMemory.SharedMemory;
+        const { DEFAULT_MEMORY_SETTINGS } = yield* Effect.promise(
+          () => import("@t3tools/contracts"),
+        );
+        yield* memory.command({ operation: "scope-save", scope, expectedRevision: 0 });
+        yield* memory.command({
+          operation: "settings-save",
+          expectedRevision: 0,
+          settings: {
+            ...DEFAULT_MEMORY_SETTINGS,
+            revision: 1,
+            learningMode: "suggest",
+            extractorModel: "local-fixture",
+            maxDailyTokens: 8704,
+          },
+        });
+        const context = {
+          threadId: actor.threadId,
+          projectId: project,
+          providerInstanceId: provider,
+          cwd: "/unresolved",
+          projectRoot: "/unresolved",
+        };
+        const job = { id: "run-capture", context, text: "I prefer short handoffs." };
+        yield* memory.capture(job);
+        yield* memory.capture(job);
+        yield* memory.processCaptureJobs;
+        yield* memory.processCaptureJobs;
+        assert.equal(calls, 1);
+        const suggestions = (yield* memory.state).suggestions!;
+        assert.equal(suggestions.length, 1);
+        assert.include(suggestions[0]!.entry.source.reference, job.text);
+        assert.equal(
+          (yield* memory.query({ scopeId: scope.id, query: "handoffs", tokenBudget: 1024 }, actor))
+            .entries.length,
+          0,
+        );
+        yield* memory.command({
+          operation: "suggestion-resolve",
+          id: suggestions[0]!.id,
+          accept: true,
+        });
+        assert.equal(
+          (yield* memory.query({ scopeId: scope.id, query: "handoffs", tokenBudget: 1024 }, actor))
+            .entries.length,
+          1,
+        );
+        yield* memory.capture({ ...job, id: "next-run" });
+        yield* memory.processCaptureJobs;
+        assert.equal(calls, 1);
+        yield* memory.command({
+          operation: "thread-policy-save",
+          policy: { threadId: actor.threadId, recall: true, learn: false },
+        });
+        yield* memory.processCaptureJobs;
+        assert.equal(calls, 1);
+        assert.deepEqual((yield* memory.state).captureUsage?.jobs, [
+          { status: "cancelled", count: 1 },
+          { status: "completed", count: 1 },
+        ]);
+        yield* memory.command({
+          operation: "delete",
+          scopeId: scope.id,
+          entryId: suggestions[0]!.entry.id,
+        });
+        assert.equal(
+          (yield* memory.query({ scopeId: scope.id, query: "handoffs", tokenBudget: 1024 }, actor))
+            .entries.length,
+          0,
+        );
+      }),
+      { client },
+    );
+  },
+);
+
+it.effect(
+  "reuses only acknowledged context and restores memories after compaction or a native-session change",
+  () =>
+    withMemory(
+      Effect.gen(function* () {
+        const memory = yield* SharedMemory.SharedMemory;
+        const { DEFAULT_MEMORY_SETTINGS } = yield* Effect.promise(
+          () => import("@t3tools/contracts"),
+        );
+        yield* memory.command({ operation: "scope-save", scope, expectedRevision: 0 });
+        yield* memory.command({ operation: "write", entry: { ...note, pinned: true } });
+        yield* memory.command({
+          operation: "settings-save",
+          expectedRevision: 0,
+          settings: { ...DEFAULT_MEMORY_SETTINGS, revision: 1, recallEnabled: true },
+        });
+        const context = {
+          threadId: actor.threadId,
+          projectId: project,
+          providerInstanceId: provider,
+          cwd: "/repo",
+          projectRoot: "/repo",
+        };
+        const input = { context, text: "continue", contextKey: "native-session:0" };
+        assert.include(yield* memory.recall({ ...input, id: "unsent" }), note.content);
+        assert.include(yield* memory.recall({ ...input, id: "retry" }), note.content);
+        yield* memory.acknowledgeRecall("retry");
+        assert.notInclude(yield* memory.recall({ ...input, id: "reused" }), note.content);
+        assert.equal((yield* memory.status(actor.threadId)).receipt?.reusedEntries, 1);
+        assert.include(
+          yield* memory.recall({ ...input, contextKey: "native-session:1", id: "compacted" }),
+          note.content,
+        );
+        yield* memory.acknowledgeRecall("compacted");
+        assert.include(
+          yield* memory.recall({ ...input, contextKey: "new-session:0", id: "new-session" }),
+          note.content,
+        );
+        yield* memory.forget({ scopeId: scope.id, entryId: note.id }, actor);
+        assert.notInclude(yield* memory.recall({ ...input, id: "forgotten" }), note.content);
+      }),
+    ),
+);
+
+it.effect(
+  "saves explicit remember requests without extraction, while respecting temporary and read-only threads",
+  () =>
+    withMemory(
+      Effect.gen(function* () {
+        const memory = yield* SharedMemory.SharedMemory;
+        yield* memory.command({ operation: "scope-save", scope, expectedRevision: 0 });
+        const context = {
+          threadId: actor.threadId,
+          projectId: project,
+          providerInstanceId: provider,
+          cwd: "/repo",
+          projectRoot: "/repo",
+        };
+        assert.include(
+          yield* memory.recall({
+            id: "explicit",
+            context,
+            text: "Remember that I prefer short handoffs.",
+          }),
+          "saved",
+        );
+        assert.equal(
+          (yield* memory.query({ scopeId: scope.id, query: "handoffs", tokenBudget: 1024 }, actor))
+            .entries.length,
+          1,
+        );
+        yield* memory.recall({
+          id: "read-only",
+          context: { ...context, readOnly: true },
+          text: "Remember that I prefer very detailed handoffs.",
+        });
+        assert.equal(
+          (yield* memory.query({ scopeId: scope.id, query: "detailed", tokenBudget: 1024 }, actor))
+            .entries.length,
+          0,
+        );
+        yield* memory.command({
+          operation: "thread-policy-save",
+          policy: { threadId: actor.threadId, recall: false, learn: false },
+        });
+        yield* memory.recall({
+          id: "private",
+          context,
+          text: "Remember that I prefer private handoffs.",
+        });
+        assert.equal(
+          (yield* memory.query(
+            { scopeId: scope.id, query: "private", tokenBudget: 1024 },
+            { kind: "user" },
+          )).entries.length,
+          0,
+        );
+        assert.equal(
+          (yield* memory
+            .query({ scopeId: scope.id, query: "handoffs", tokenBudget: 1024 }, actor)
+            .pipe(Effect.result))._tag,
+          "Failure",
+        );
+        assert.equal((yield* memory.write(note, actor).pipe(Effect.result))._tag, "Failure");
+      }),
+    ),
+);
+
+it.effect("does not choose arbitrarily between overlapping writable project categories", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const memory = yield* SharedMemory.SharedMemory;
+      for (const selected of [
+        scope,
+        { ...scope, id: "other-project-memory", name: "Other project" },
+      ])
+        yield* memory.command({ operation: "scope-save", scope: selected, expectedRevision: 0 });
+      assert.include(
+        yield* memory.recall({
+          id: "ambiguous",
+          context: { ...actor, cwd: "/repo", projectRoot: "/repo" },
+          text: "Remember that I prefer short handoffs.",
+        }),
+        "unique writable category",
+      );
+      for (const scopeId of [scope.id, "other-project-memory"])
+        assert.equal(
+          (yield* memory.query({ scopeId, query: "handoffs", tokenBudget: 1024 }, { kind: "user" }))
+            .entries.length,
+          0,
+        );
+    }),
+  ),
 );

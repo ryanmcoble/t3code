@@ -1,3 +1,4 @@
+import * as MemoryTurnObserver from "../memory/MemoryTurnObserver.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -146,6 +147,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
+    const memoryObserver = yield* MemoryTurnObserver.MemoryTurnObserver;
     const eventSink = yield* EventSink.EventSinkV2;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -641,6 +643,9 @@ export const layer: Layer.Layer<
       });
       const { isCurrentAttemptInStatus } = runControls;
 
+      const memoryProject = yield* projects
+        .getById(projection.thread.projectId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
         thread: projection.thread,
         modelSelection: run.modelSelection,
@@ -1419,7 +1424,26 @@ export const layer: Layer.Layer<
           });
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
           const start = compact ? session.compactThread! : session.startTurn;
-          const context = [delivery.context, restartNote]
+          const recalledMemory =
+            compact || goalCommand
+              ? ""
+              : yield* memoryObserver.recall({
+                  id: run.id,
+                  contextKey: `${run.providerInstanceId}:${runningProviderThread.nativeThreadRef?.nativeId ?? runningProviderThread.id}:${projection.turnItems.filter((item) => item.type === "compaction").length}`,
+                  text: message.text,
+                  context: {
+                    readOnly: projection.thread.interactionMode === "plan",
+                    threadId: projection.thread.id,
+                    projectId: projection.thread.projectId,
+                    providerInstanceId: run.providerInstanceId,
+                    cwd: resolvedRuntimePolicy.cwd ?? "",
+                    projectRoot: Option.isSome(memoryProject)
+                      ? memoryProject.value.workspaceRoot
+                      : (resolvedRuntimePolicy.cwd ?? ""),
+                  },
+                });
+          if (!(yield* isCurrentAttemptInStatus("running"))) return;
+          const context = [delivery.context, restartNote, recalledMemory]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1433,6 +1457,7 @@ export const layer: Layer.Layer<
                   : `${context}\n\nUser message:\n${userText}`,
             },
           }).pipe(
+            Effect.tap(() => memoryObserver.delivered(run.id)),
             // Clear pending handoff markers for refused prompts so the next turn retains the native session.
             Effect.tapError((error) =>
               refusedBeforePrompt(error)
@@ -1468,13 +1493,7 @@ export const layer: Layer.Layer<
               }),
         ),
       );
-      const deliverySession =
-        effectiveHandoffs.length === 0 &&
-        retryHandoff.length === 0 &&
-        restartNote === "" &&
-        !noteContinuation
-          ? session
-          : makeDeliverySession(session, startWithHandoffs);
+      const deliverySession = makeDeliverySession(session, startWithHandoffs);
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,

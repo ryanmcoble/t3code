@@ -1,3 +1,8 @@
+import {
+  memoryRulesFromDraft,
+  memoryRulesDraftError,
+} from "@t3tools/client-runtime/state/shared-capabilities";
+import { MemoryLearningControls } from "./MemoryLearningControls";
 import { useAtomValue } from "@effect/atom-react";
 import { linkableMachines } from "@t3tools/client-runtime/link-request";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
@@ -53,10 +58,21 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
   const [entryId, setEntryId] = useState(Crypto.randomUUID);
   const [correction, setCorrection] = useState<MemoryEntry | null>(null);
   const [scopeName, setScopeName] = useState("");
-  const [scopeKind, setScopeKind] = useState<MemoryScope["kind"]>("project");
+  const [scopeKind, setScopeKind] = useState<MemoryScope["kind"] | "temporary">("project");
   const [projectIds, setProjectIds] = useState<ReadonlyArray<ProjectId>>([]);
   const [editingScope, setEditingScope] = useState<MemoryScope | null>(null);
   const [writes, setWrites] = useState(true);
+  const [folderRoots, setFolderRoots] = useState("");
+  const [repositoryRoots, setRepositoryRoots] = useState("");
+  const [exclusions, setExclusions] = useState("");
+  const [descendants, setDescendants] = useState(true);
+  const [allProjects, setAllProjects] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [expiresAt, setExpiresAt] = useState("");
+  const lifecycle = config?.environment.capabilities.memoryLifecycle === 1;
+  const draftError = lifecycle
+    ? memoryRulesDraftError({ folderRoots, repositoryRoots, exclusions, descendants })
+    : null;
   const [selectedProviders, setSelectedProviders] = useState<ReadonlyArray<string> | null>(null);
   const providerIds =
     config?.providers
@@ -105,12 +121,24 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
           Source-attributed project knowledge shared across harnesses. Access stays explicit for
           personal, company and project scopes.
         </Text>
+        {draftError ? (
+          <Text className="px-4 text-sm text-danger-foreground">{draftError}</Text>
+        ) : null}
         {error || state.error || notes.error ? (
           <Text className="text-sm text-danger-foreground">
             {error ?? state.error ?? notes.error}
           </Text>
         ) : null}
       </View>
+      {lifecycle && state.data ? (
+        <MemoryLearningControls
+          key={state.data.settings?.revision ?? 0}
+          state={state.data}
+          disabled={!allowed || busy}
+          run={run}
+          refresh={state.refresh}
+        />
+      ) : null}
       {[
         ...scopes.map((s) => ({ id: s.id, name: s.name })),
         ...bindings.map((b) => ({ id: b.scopeId, name: `${b.name} · shared` })),
@@ -156,6 +184,8 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
                 disabled={!allowed || busy}
                 onPress={() => {
                   setCorrection(entry);
+                  setPinned(entry.pinned ?? false);
+                  setExpiresAt(entry.expiresAt ?? "");
                   setEntryId(Crypto.randomUUID());
                   setTitle(entry.title);
                   setContent(entry.content);
@@ -209,6 +239,24 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
               className="rounded-lg border border-border p-3 text-foreground"
             />
           </View>
+          {lifecycle ? (
+            <>
+              <ListToggleRow
+                label="Pin in this category"
+                value={pinned}
+                onValueChange={setPinned}
+              />
+              <View className="p-4">
+                <TextInput
+                  accessibilityLabel="Memory expiry"
+                  value={expiresAt}
+                  onChangeText={setExpiresAt}
+                  placeholder="Optional expiry: ISO date and time"
+                  className="rounded-lg border border-border p-3 text-foreground"
+                />
+              </View>
+            </>
+          ) : null}
           <ListActionRow
             label={correction ? "Save correction" : "Save finding"}
             disabled={!allowed || busy || !title || !content || !reference}
@@ -222,6 +270,7 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
                     title,
                     content,
                     source: { reference },
+                    ...(lifecycle ? { pinned, ...(expiresAt ? { expiresAt } : {}) } : {}),
                     kind: correction?.kind ?? "finding",
                     ...(correction ? { supersedes: correction.id } : {}),
                   },
@@ -268,10 +317,29 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
               onPress={() => {
                 setEditingScope(s);
                 setScopeName(s.name);
-                setScopeKind(s.kind);
+                setScopeKind(s.temporary ? "temporary" : s.kind);
                 setProjectIds(s.projectIds);
                 setSelectedProviders(s.providerInstanceIds);
                 setWrites(s.writableProviderInstanceIds.length > 0);
+                setFolderRoots(
+                  (s.rules ?? [])
+                    .filter((rule) => rule.kind === "folder")
+                    .map((rule) => rule.path)
+                    .join("\n"),
+                );
+                setRepositoryRoots(
+                  (s.rules ?? [])
+                    .filter((rule) => rule.kind === "repository")
+                    .map((rule) => rule.path)
+                    .join("\n"),
+                );
+                setExclusions(
+                  [...new Set((s.rules ?? []).flatMap((rule) => rule.exclusions))].join("\n"),
+                );
+                setDescendants(
+                  s.rules?.find((rule) => rule.kind === "folder")?.descendants ?? true,
+                );
+                setAllProjects(s.allProjects ?? false);
               }}
             />
           ))}
@@ -284,7 +352,10 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
               className="rounded-lg border border-border p-3 text-foreground"
             />
           </View>
-          {(["project", "personal", "company"] as const).map((kind) => (
+          {(lifecycle
+            ? (["project", "personal", "company", "temporary"] as const)
+            : (["project", "personal", "company"] as const)
+          ).map((kind) => (
             <ListChoiceRow
               key={kind}
               label={`${kind} memory`}
@@ -292,6 +363,70 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
               onPress={() => setScopeKind(kind)}
             />
           ))}
+          {lifecycle ? (
+            <View className="gap-2 p-4">
+              <Text className="text-sm text-foreground-muted">
+                Category locations on this environment. Enter one absolute path per line.
+              </Text>
+              <Text className="text-sm text-foreground">Folder roots</Text>
+              <TextInput
+                accessibilityLabel="Memory folder roots"
+                multiline
+                autoCapitalize="none"
+                value={folderRoots}
+                onChangeText={setFolderRoots}
+                className="rounded-lg border border-border p-3 text-foreground"
+              />
+              <ListToggleRow
+                label="Include nested folders and repositories"
+                value={descendants}
+                onValueChange={setDescendants}
+              />
+              <Text className="text-sm text-foreground">Repository roots</Text>
+              <TextInput
+                accessibilityLabel="Memory repository roots"
+                multiline
+                autoCapitalize="none"
+                value={repositoryRoots}
+                onChangeText={setRepositoryRoots}
+                className="rounded-lg border border-border p-3 text-foreground"
+              />
+              <Text className="text-sm text-foreground">Excluded paths</Text>
+              <TextInput
+                accessibilityLabel="Memory excluded paths"
+                multiline
+                autoCapitalize="none"
+                value={exclusions}
+                onChangeText={setExclusions}
+                className="rounded-lg border border-border p-3 text-foreground"
+              />
+              <ListToggleRow
+                label="Apply to all projects on this environment"
+                value={allProjects}
+                onValueChange={setAllProjects}
+              />
+              {projects.map((project) => (
+                <View key={project.id}>
+                  <ListActionRow
+                    label={`Add ${project.title} folder`}
+                    onPress={() =>
+                      setFolderRoots(
+                        [folderRoots, project.workspaceRoot].filter(Boolean).join("\n"),
+                      )
+                    }
+                  />
+                  <ListActionRow
+                    label={`Add ${project.title} repository`}
+                    onPress={() =>
+                      setRepositoryRoots(
+                        [repositoryRoots, project.workspaceRoot].filter(Boolean).join("\n"),
+                      )
+                    }
+                  />
+                </View>
+              ))}
+            </View>
+          ) : null}
           {projects.map((p) => (
             <ListToggleRow
               key={p.id}
@@ -323,7 +458,7 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
           />
           <ListActionRow
             label={editingScope ? "Update scope access" : "Create memory scope"}
-            disabled={!allowed || busy || !scopeName}
+            disabled={!allowed || busy || !scopeName || Boolean(draftError)}
             onPress={async () => {
               if (
                 await run({
@@ -332,8 +467,20 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
                   scope: {
                     id: editingScope?.id ?? Crypto.randomUUID(),
                     name: scopeName,
-                    kind: scopeKind,
+                    kind: scopeKind === "temporary" ? "project" : scopeKind,
+                    ...(lifecycle ? { temporary: scopeKind === "temporary" } : {}),
                     projectIds,
+                    ...(lifecycle
+                      ? {
+                          allProjects,
+                          rules: memoryRulesFromDraft({
+                            folderRoots,
+                            repositoryRoots,
+                            exclusions,
+                            descendants,
+                          }),
+                        }
+                      : {}),
                     providerInstanceIds: providerIds,
                     writableProviderInstanceIds: writes ? providerIds : [],
                     revision: (editingScope?.revision ?? 0) + 1,
@@ -343,6 +490,10 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
               ) {
                 setScopeName("");
                 setEditingScope(null);
+                setFolderRoots("");
+                setRepositoryRoots("");
+                setExclusions("");
+                setAllProjects(false);
               }
             }}
           />
@@ -369,7 +520,17 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
               key={s.id}
               label={`Connect ${s.name}`}
               description="Uses the projects and harnesses selected above."
-              disabled={!allowed || !canGrant || busy || !projectIds.length || !providerIds.length}
+              disabled={
+                !allowed ||
+                !canGrant ||
+                Boolean(draftError) ||
+                busy ||
+                (!projectIds.length &&
+                  !allProjects &&
+                  !folderRoots.trim() &&
+                  !repositoryRoots.trim()) ||
+                !providerIds.length
+              }
               onPress={async () => {
                 const route = linkableMachines({
                   environments,
@@ -388,9 +549,21 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
                   destinationId: environmentId,
                   binding: {
                     scopeId: s.id,
+                    ...(lifecycle ? { kind: s.kind, temporary: s.temporary ?? false } : {}),
                     name: s.name,
                     ownerEnvironmentId: ownerId,
                     sourceUrl: route,
+                    ...(lifecycle
+                      ? {
+                          allProjects,
+                          rules: memoryRulesFromDraft({
+                            folderRoots,
+                            repositoryRoots,
+                            exclusions,
+                            descendants,
+                          }),
+                        }
+                      : {}),
                     projectIds,
                     providerInstanceIds: providerIds,
                     access: writes ? "write" : "read",

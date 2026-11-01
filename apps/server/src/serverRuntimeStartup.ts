@@ -1,3 +1,5 @@
+import * as SharedMemory from "./memory/SharedMemory.ts";
+import * as MemoryCaptureWorker from "./memory/MemoryCaptureWorker.ts";
 import * as Option from "effect/Option";
 import * as SetupProfiles from "./setupProfiles/SetupProfiles.ts";
 import * as SetupProfileWorker from "./setupProfiles/SetupProfileWorker.ts";
@@ -552,6 +554,11 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       startEffectWorker: runStartupPhase(
         "orchestration-v2.effect-worker.start",
         Effect.gen(function* () {
+          const memory = yield* Effect.serviceOption(SharedMemory.SharedMemory);
+          if (Option.isSome(memory))
+            yield* MemoryCaptureWorker.start.pipe(
+              Effect.provideService(SharedMemory.SharedMemory, memory.value),
+            );
           const setupProfiles = yield* Effect.serviceOption(SetupProfiles.SetupProfiles);
           if (Option.isSome(setupProfiles))
             yield* SetupProfileWorker.start.pipe(

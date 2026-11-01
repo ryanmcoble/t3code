@@ -1,3 +1,4 @@
+export { memoryRulesFromDraft, memoryRulesDraftError } from "../memoryRules.ts";
 import {
   WS_METHODS,
   SharedMemoryError,
@@ -79,6 +80,11 @@ export function createSharedCapabilityAtoms<R, E>(
   });
   return {
     memoryState,
+    memoryStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "memory:status",
+      tag: WS_METHODS.memoryStatus,
+      staleTimeMs: 0,
+    }),
     memoryQuery,
     memoryCommand,
     memoryGrant,
