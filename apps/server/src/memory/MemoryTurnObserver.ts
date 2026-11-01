@@ -50,7 +50,7 @@ export const layer = Layer.effect(
           const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
           const run = projection.runs.find((value) => value.id === runId);
           if (!run || run.status !== "completed") return;
-          const message = projection.messages.find((value) => value.id === run.userMessageId);
+          const message = yield* projections.getRunMessage(threadId, runId);
           const project = yield* projects.getShell(projection.thread.projectId);
           if (!message || Option.isNone(project) || projection.thread.interactionMode === "plan")
             return;
