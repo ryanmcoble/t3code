@@ -1,3 +1,6 @@
+import * as ComputerUse from "./computer/ComputerUse.ts";
+import * as SharedMemory from "./memory/SharedMemory.ts";
+import * as SetupProfiles from "./setupProfiles/SetupProfiles.ts";
 import * as ProjectFolderTransfer from "./project/ProjectFolderTransfer.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -1341,6 +1344,9 @@ export const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const folderTransfer = yield* ProjectFolderTransfer.ProjectFolderTransfer;
+      const setupProfiles = yield* SetupProfiles.SetupProfiles;
+      const memory = yield* SharedMemory.SharedMemory;
+      const computer = yield* ComputerUse.ComputerUse;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -2498,6 +2504,18 @@ export const layerWsRpc = (
         [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
+        [WS_METHODS.setupProfilesSubscribe]: () => setupProfiles.changes,
+        [WS_METHODS.computerUseState]: () => computer.state,
+        [WS_METHODS.computerUseCommand]: (input) => computer.command(input),
+        [WS_METHODS.memoryState]: () => memory.state,
+        [WS_METHODS.memoryQuery]: (input) => memory.query(input, { kind: "user" }),
+        [WS_METHODS.memoryCommand]: (input) => memory.command(input),
+        [WS_METHODS.memoryExport]: (input) => memory.exportScope(input.scopeId),
+        [WS_METHODS.memoryGrant]: (input) => memory.grant(input),
+        [WS_METHODS.setupProfilesState]: () => setupProfiles.state,
+        [WS_METHODS.setupProfilesCommand]: (input) => setupProfiles.command(input),
+        [WS_METHODS.setupProfilesImport]: (input) => setupProfiles.importSetup(input),
+        [WS_METHODS.setupProfilesGrant]: (input) => setupProfiles.grant(input),
         [WS_METHODS.peerLinksList]: (_input) =>
           peerLinks.list.pipe(Effect.map((links) => ({ links }))),
         [WS_METHODS.peerLinksLink]: (input) => peerLinks.link(input),
@@ -2793,6 +2811,7 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.projectsFolderStatus]: (input) => folderTransfer.status(input),
         [WS_METHODS.projectsFolderSyncGet]: (input) => folderTransfer.getSync(input),
         [WS_METHODS.projectsFolderSyncSet]: (input) => folderTransfer.setSync(input),
         [WS_METHODS.projectsFolderExportEnd]: (input) => folderTransfer.exportEnd(input),

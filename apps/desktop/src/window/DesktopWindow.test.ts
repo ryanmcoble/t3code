@@ -110,6 +110,7 @@ function makeFakeBrowserWindow() {
     once: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       windowListeners.set(eventName, listener);
     }),
+    hide: vi.fn(),
     restore: vi.fn(),
     setBackgroundColor: vi.fn(),
     setAutoHideCursor: vi.fn(),
@@ -124,6 +125,7 @@ function makeFakeBrowserWindow() {
 
   return {
     window: window as unknown as Electron.BrowserWindow,
+    hide: window.hide,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
     isDestroyed: window.isDestroyed,
@@ -808,7 +810,7 @@ describe("DesktopWindow", () => {
         if (!close) {
           return yield* Effect.die("window close listener was not registered");
         }
-        close();
+        close({ preventDefault: vi.fn() });
         yield* Effect.promise(() => Promise.resolve());
 
         assert.deepEqual(mainWindowBoundsUpdates, [{ x: 220, y: 140, width: 1380, height: 920 }]);
@@ -846,7 +848,7 @@ describe("DesktopWindow", () => {
           return yield* Effect.die("window lifecycle listeners were not registered");
         }
 
-        close();
+        close({ preventDefault: vi.fn() });
         yield* Effect.promise(() => Promise.resolve());
         assert.deepEqual(mainWindowBoundsUpdates, []);
 
@@ -925,7 +927,11 @@ describe("DesktopWindow", () => {
         if (!close) {
           return yield* Effect.die("window close listener was not registered");
         }
-        close();
+        const preventDefault = vi.fn();
+        close({ preventDefault });
+        assert.equal(preventDefault.mock.calls.length, 1);
+        assert.equal(fakeWindow.hide.mock.calls.length, 1);
+
         yield* Deferred.await(writeStarted);
         fakeWindow.isDestroyed.mockReturnValue(true);
 

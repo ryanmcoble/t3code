@@ -25,6 +25,7 @@ export const ProjectFolderImportInput = Schema.Struct({
   destinationPath: TrimmedNonEmptyString,
   entries: ProjectFolderEntries,
   previousEntries: Schema.optional(ProjectFolderEntries),
+  incremental: Schema.optional(Schema.Boolean),
 });
 export const ProjectFolderImportResult = Schema.Struct({
   ...ProjectFolderSessionInput.fields,
@@ -87,6 +88,8 @@ export const ProjectFolderSyncState = Schema.Struct({
   peerEnvironmentId: EnvironmentId,
   peerPath: TrimmedNonEmptyString,
   baseline: ProjectFolderEntries,
+  automatic: Schema.optionalKey(Schema.Boolean),
+  coordinatorEnvironmentId: Schema.optionalKey(EnvironmentId),
 });
 export type ProjectFolderSyncState = typeof ProjectFolderSyncState.Type;
 export const ProjectFolderSyncGetInput = Schema.Struct({ cwd: TrimmedNonEmptyString });
@@ -100,3 +103,18 @@ export const ProjectFolderExportEndInput = Schema.Struct({
   ...ProjectFolderSessionInput.fields,
   validate: Schema.Boolean,
 });
+
+export const ProjectFolderStatusResult = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  exists: Schema.Boolean,
+  revision: Schema.String,
+  sync: Schema.NullOr(
+    Schema.Struct({
+      peerEnvironmentId: EnvironmentId,
+      peerPath: TrimmedNonEmptyString,
+      automatic: Schema.optionalKey(Schema.Boolean),
+      coordinatorEnvironmentId: Schema.optionalKey(EnvironmentId),
+    }),
+  ),
+});
+export type ProjectFolderStatusResult = typeof ProjectFolderStatusResult.Type;

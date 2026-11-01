@@ -1,5 +1,26 @@
+import { ComputerUseState, ComputerUseCommand, ComputerUseError } from "./computerUse.ts";
+import {
+  MemoryState,
+  MemoryQuery,
+  MemoryQueryResult,
+  MemoryCommand,
+  MemoryExport,
+  MemoryGrantInput,
+  MemoryGrantResult,
+  SharedMemoryError,
+} from "./sharedMemory.ts";
+import {
+  SetupProfileState,
+  SetupProfileCommand,
+  SetupProfileImportInput,
+  SetupProfileImportResult,
+  SetupProfileGrantInput,
+  SetupProfileGrantResult,
+  SetupProfileError,
+} from "./setupProfile.ts";
 import { ProjectFolderExportEndInput } from "./projectFolder.ts";
 import {
+  ProjectFolderStatusResult,
   ProjectFolderSyncGetInput,
   ProjectFolderSyncGetResult,
   ProjectFolderSyncSetInput,
@@ -421,6 +442,7 @@ import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
   projectsListIgnoredFiles: "projects.listIgnoredFiles",
+  projectsFolderStatus: "projects.folder.status",
   projectsFolderSyncGet: "projects.folder.sync.get",
   projectsFolderSyncSet: "projects.folder.sync.set",
   projectsFolderExportEnd: "projects.folder.export.end",
@@ -529,6 +551,18 @@ export const WS_METHODS = {
   serverRunStorageCleanup: "server.runStorageCleanup",
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
   serverGetDatabaseStorage: "server.getDatabaseStorage",
+  setupProfilesSubscribe: "setupProfiles.subscribe",
+  setupProfilesState: "setupProfiles.state",
+  setupProfilesCommand: "setupProfiles.command",
+  setupProfilesImport: "setupProfiles.import",
+  setupProfilesGrant: "setupProfiles.grant",
+  computerUseState: "computerUse.state",
+  computerUseCommand: "computerUse.command",
+  memoryState: "memory.state",
+  memoryQuery: "memory.query",
+  memoryCommand: "memory.command",
+  memoryExport: "memory.export",
+  memoryGrant: "memory.grant",
   peerLinksList: "peerLinks.list",
   peerLinksLink: "peerLinks.link",
   peerLinksUnlink: "peerLinks.unlink",
@@ -808,6 +842,68 @@ const WsServerGetDatabaseStorageRpc = Rpc.make(WS_METHODS.serverGetDatabaseStora
   success: Schema.NullOr(DatabaseStorageStatus),
   stream: true,
   error: EnvironmentAuthorizationError,
+});
+
+const WsSetupProfilesSubscribeRpc = Rpc.make(WS_METHODS.setupProfilesSubscribe, {
+  payload: Schema.Struct({}),
+  success: SetupProfileState,
+  stream: true,
+  error: Schema.Union([SetupProfileError, EnvironmentAuthorizationError]),
+});
+const WsSetupProfilesStateRpc = Rpc.make(WS_METHODS.setupProfilesState, {
+  payload: Schema.Struct({}),
+  success: SetupProfileState,
+  error: Schema.Union([SetupProfileError, EnvironmentAuthorizationError]),
+});
+const WsComputerUseStateRpc = Rpc.make(WS_METHODS.computerUseState, {
+  payload: Schema.Struct({}),
+  success: ComputerUseState,
+  error: Schema.Union([ComputerUseError, EnvironmentAuthorizationError]),
+});
+const WsComputerUseCommandRpc = Rpc.make(WS_METHODS.computerUseCommand, {
+  payload: ComputerUseCommand,
+  success: Schema.Void,
+  error: Schema.Union([ComputerUseError, EnvironmentAuthorizationError]),
+});
+const WsMemoryStateRpc = Rpc.make(WS_METHODS.memoryState, {
+  payload: Schema.Struct({}),
+  success: MemoryState,
+  error: Schema.Union([SharedMemoryError, EnvironmentAuthorizationError]),
+});
+const WsMemoryQueryRpc = Rpc.make(WS_METHODS.memoryQuery, {
+  payload: MemoryQuery,
+  success: MemoryQueryResult,
+  error: Schema.Union([SharedMemoryError, EnvironmentAuthorizationError]),
+});
+const WsMemoryCommandRpc = Rpc.make(WS_METHODS.memoryCommand, {
+  payload: MemoryCommand,
+  success: Schema.Void,
+  error: Schema.Union([SharedMemoryError, EnvironmentAuthorizationError]),
+});
+const WsMemoryExportRpc = Rpc.make(WS_METHODS.memoryExport, {
+  payload: Schema.Struct({ scopeId: Schema.String }),
+  success: MemoryExport,
+  error: Schema.Union([SharedMemoryError, EnvironmentAuthorizationError]),
+});
+const WsMemoryGrantRpc = Rpc.make(WS_METHODS.memoryGrant, {
+  payload: MemoryGrantInput,
+  success: MemoryGrantResult,
+  error: Schema.Union([SharedMemoryError, EnvironmentAuthorizationError]),
+});
+const WsSetupProfilesCommandRpc = Rpc.make(WS_METHODS.setupProfilesCommand, {
+  payload: SetupProfileCommand,
+  success: SetupProfileState,
+  error: Schema.Union([SetupProfileError, EnvironmentAuthorizationError]),
+});
+const WsSetupProfilesImportRpc = Rpc.make(WS_METHODS.setupProfilesImport, {
+  payload: SetupProfileImportInput,
+  success: SetupProfileImportResult,
+  error: Schema.Union([SetupProfileError, EnvironmentAuthorizationError]),
+});
+const WsSetupProfilesGrantRpc = Rpc.make(WS_METHODS.setupProfilesGrant, {
+  payload: SetupProfileGrantInput,
+  success: SetupProfileGrantResult,
+  error: Schema.Union([SetupProfileError, EnvironmentAuthorizationError]),
 });
 
 const WsPeerLinksListRpc = Rpc.make(WS_METHODS.peerLinksList, {
@@ -1319,6 +1415,11 @@ const WsProjectsListIgnoredFilesRpc = Rpc.make(WS_METHODS.projectsListIgnoredFil
   error: Schema.Union([ProjectListEntriesError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsFolderStatusRpc = Rpc.make(WS_METHODS.projectsFolderStatus, {
+  payload: ProjectFolderSyncGetInput,
+  success: ProjectFolderStatusResult,
+  error: Schema.Union([ProjectFolderTransferError, EnvironmentAuthorizationError]),
+});
 const WsProjectsFolderSyncGetRpc = Rpc.make(WS_METHODS.projectsFolderSyncGet, {
   payload: ProjectFolderSyncGetInput,
   success: ProjectFolderSyncGetResult,
@@ -2057,6 +2158,18 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetStorageCleanupReportRpc,
   WsServerGetDatabaseStorageRpc,
   WsServerUpdateSettingsRpc,
+  WsSetupProfilesSubscribeRpc,
+  WsSetupProfilesStateRpc,
+  WsComputerUseStateRpc,
+  WsComputerUseCommandRpc,
+  WsMemoryStateRpc,
+  WsMemoryQueryRpc,
+  WsMemoryCommandRpc,
+  WsMemoryExportRpc,
+  WsMemoryGrantRpc,
+  WsSetupProfilesCommandRpc,
+  WsSetupProfilesImportRpc,
+  WsSetupProfilesGrantRpc,
   WsPeerLinksListRpc,
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,
@@ -2143,6 +2256,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeProjectClonesRpc,
   WsProjectsListEntriesRpc,
   WsProjectsListIgnoredFilesRpc,
+  WsProjectsFolderStatusRpc,
   WsProjectsFolderSyncGetRpc,
   WsProjectsFolderSyncSetRpc,
   WsProjectsFolderExportEndRpc,

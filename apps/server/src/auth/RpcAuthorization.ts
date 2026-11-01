@@ -39,6 +39,13 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
   ...CLIENT_GUARDED_RPC_SCOPES,
+  [WS_METHODS.memoryState]: AuthSettingsWriteScope,
+  [WS_METHODS.memoryQuery]: AuthSettingsWriteScope,
+  [WS_METHODS.memoryExport]: AuthSettingsWriteScope,
+  [WS_METHODS.computerUseState]: AuthSettingsWriteScope,
+  [WS_METHODS.setupProfilesSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.setupProfilesState]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectsFolderStatus]: AuthFilesystemReadScope,
   [WS_METHODS.projectsFolderSyncGet]: AuthFilesystemReadScope,
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: AuthOrchestrationOperateScope,
   [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: AuthOrchestrationReadScope,

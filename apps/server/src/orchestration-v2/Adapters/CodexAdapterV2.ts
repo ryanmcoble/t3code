@@ -1336,6 +1336,7 @@ function codexThreadRuntimeParams(input: {
       ...(mcpSession === undefined
         ? {}
         : {
+            ...McpProviderSession.setupCodexMcpConfig(mcpSession),
             // Override only T3's server so launch-argument MCP servers survive.
             "mcp_servers.t3-code": {
               url: mcpSession.endpoint,

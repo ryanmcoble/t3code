@@ -1,4 +1,4 @@
-import { requestGuarded, runStreamGuarded } from "../rpc/client.ts";
+import { request, requestGuarded, runStreamGuarded } from "../rpc/client.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Option from "effect/Option";
@@ -70,6 +70,11 @@ const setup = Effect.gen(function* () {
 
 describe("command permissions", () => {
   it.effect.each([
+    [WS_METHODS.setupProfilesCommand, AuthSettingsWriteScope],
+    [WS_METHODS.setupProfilesImport, AuthSettingsWriteScope],
+    [WS_METHODS.memoryExport, AuthSettingsWriteScope],
+    [WS_METHODS.memoryCommand, AuthSettingsWriteScope],
+    [WS_METHODS.computerUseCommand, AuthSettingsWriteScope],
     [WS_METHODS.projectsFolderExport, AuthFilesystemReadScope],
     [WS_METHODS.projectsFolderExportEnd, AuthFilesystemReadScope],
     [WS_METHODS.projectsFolderRead, AuthFilesystemReadScope],
@@ -78,7 +83,7 @@ describe("command permissions", () => {
     [WS_METHODS.projectsFolderFinish, AuthFilesystemWriteScope],
     [WS_METHODS.projectsFolderCancel, AuthFilesystemWriteScope],
     [WS_METHODS.projectsFolderSyncSet, AuthFilesystemWriteScope],
-  ] as const)("uses the destination filesystem grant for %s", ([method, scope]) =>
+  ] as const)("uses the required destination grant for %s", ([method, scope]) =>
     Effect.gen(function* () {
       const registry = yield* setup;
       const permission = createCommandPermissions(runtime, method);
@@ -554,5 +559,43 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     }).pipe(Stream.runDrain, Effect.provideService(EnvironmentSupervisor, supervisor), Effect.flip);
     expect(streamed._tag).toBe("EnvironmentAuthorizationError");
     expect(writes).toBe(0);
+  }),
+);
+
+it.effect("allows shared-capability queries through the ordinary RPC query path", () =>
+  Effect.gen(function* () {
+    const memory = { scopes: [], bindings: [], profileScopes: [], grants: [] };
+    const computer = {
+      config: { enabled: false, command: "cua-driver", providerInstanceIds: [], allowedApps: [] },
+      lease: null,
+      readiness: "disabled",
+      message: "Disabled",
+    };
+    const client = {
+      [WS_METHODS.memoryState]: vi.fn(() => Effect.succeed(memory)),
+      [WS_METHODS.computerUseState]: vi.fn(() => Effect.succeed(computer)),
+      [WS_METHODS.memoryQuery]: vi.fn(() =>
+        Effect.succeed({
+          entries: [],
+          estimatedTokens: 0,
+          truncated: false,
+          contextKind: "evidence",
+        }),
+      ),
+    };
+    const supervisor = {
+      target: { environmentId: env },
+      session: yield* SubscriptionRef.make(Option.some({ client } as unknown as RpcSession)),
+    } as EnvironmentSupervisor["Service"];
+    const query = Effect.gen(function* () {
+      expect(yield* request(WS_METHODS.memoryState, {})).toEqual(memory);
+      expect(yield* request(WS_METHODS.computerUseState, {})).toEqual(computer);
+      expect(
+        (yield* request(WS_METHODS.memoryQuery, { scopeId: "scope", query: "", tokenBudget: 128 }))
+          .contextKind,
+      ).toBe("evidence");
+    });
+    yield* Effect.provideService(query, EnvironmentSupervisor, supervisor);
+    expect(client[WS_METHODS.memoryState]).toHaveBeenCalledOnce();
   }),
 );

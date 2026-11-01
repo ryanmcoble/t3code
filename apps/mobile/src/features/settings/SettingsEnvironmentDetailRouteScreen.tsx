@@ -1,3 +1,6 @@
+import { SharedMemorySection } from "./SharedMemorySection";
+import { ComputerUseSection } from "./ComputerUseSection";
+import { SetupProfileSection } from "./SetupProfileSection";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -283,6 +286,9 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                     />
                   ) : null}
                 </SettingsSection>
+                <SetupProfileSection environmentId={environmentId} />
+                <SharedMemorySection environmentId={environmentId} />
+                <ComputerUseSection environmentId={environmentId} />
                 <SettingsSection title="Providers">
                   <SettingsActionRow
                     icon="arrow.clockwise"

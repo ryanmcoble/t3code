@@ -217,6 +217,9 @@ export const make = Effect.gen(function* () {
     orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
     ...(databaseMigration === undefined ? {} : { databaseMigration }),
     capabilities: {
+      setupProfiles: 1,
+      sharedMemory: 1,
+      computerUse: 1,
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,
@@ -265,6 +268,7 @@ export const make = Effect.gen(function* () {
       projectCloneTracking: true,
       ignoredFileListing: true,
       projectFolderTransfer: true,
+      projectFolderAutoSync: true,
       triage: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),

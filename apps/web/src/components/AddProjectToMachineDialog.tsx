@@ -1,9 +1,8 @@
 import {
   copyOrSyncProjectFolder,
-  findFolderSyncProject,
   linkProjectFolders,
 } from "@t3tools/client-runtime/operations/project-folder";
-import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
+import { normalizeProjectPathForComparison } from "@t3tools/client-runtime/state/projects";
 import { useAtomValue } from "@effect/atom-react";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -11,11 +10,6 @@ import { orchestrationEnvironment } from "../state/orchestration";
 import { threadContextAttachment } from "../lib/threadContextAttachment";
 import { useParams } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import {
-  getAddProjectInitialQuery,
-  getCloneDestinationPath,
-  getCloneDirectoryName,
-} from "@t3tools/client-runtime/operations/projects";
 import {
   type EnvironmentId,
   type ProjectIgnoredFile,
@@ -29,6 +23,7 @@ import {
   cloneUrlProtocol,
 } from "@t3tools/shared/cloneUrl";
 import { ArrowRightIcon } from "lucide-react";
+import { isElectron } from "../env";
 import { useId, useState, useRef } from "react";
 import { create } from "zustand";
 
@@ -50,6 +45,7 @@ import {
   useProject,
   useProjects,
 } from "../state/entities";
+import { usePrimaryEnvironmentId } from "../state/environments";
 import { useEnvironments } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
@@ -114,6 +110,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const handleNewThread = useNewThreadHandler();
   const { draftId: routeDraftId } = useParams({ strict: false });
   const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projects = useProjects();
   const projectEnvironments = useLogicalProjectEnvironments(project, false);
   const newTargets = useAddProjectTargets(project, projectEnvironments);
@@ -141,9 +138,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const reuseSyncedFolder = Boolean(
     folderSync.data && target?.environmentId === folderSync.data.peerEnvironmentId,
   );
-  const existingProject = reuseSyncedFolder
-    ? findFolderSyncProject(projects, folderSync.data)
-    : undefined;
+
   const sourceUrl =
     project?.repositoryIdentity?.origin?.remoteUrl ??
     project?.repositoryIdentity?.locator.remoteUrl ??
@@ -162,17 +157,23 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   );
   const targetEnvironment = environments.find((env) => env.environmentId === target?.environmentId);
   const isFolder = sourceUrl.length === 0;
-  const defaultPath = getCloneDestinationPath(
-    getAddProjectInitialQuery(targetEnvironment?.serverConfig?.settings.addProjectBaseDirectory),
-    isFolder
-      ? inferProjectTitleFromPath(project?.workspaceRoot ?? "folder")
-      : getCloneDirectoryName(sourceUrl),
-  );
+  const defaultPath = project?.workspaceRoot ?? "";
   const [pathOverride, setPathOverride] = useState<string | null>(null);
   const destinationPath = reuseSyncedFolder
     ? folderSync.data!.peerPath
     : (pathOverride ?? defaultPath);
 
+  const existingProject = projects.find(
+    (candidate) =>
+      candidate.environmentId === target?.environmentId &&
+      normalizeProjectPathForComparison(candidate.workspaceRoot) ===
+        normalizeProjectPathForComparison(destinationPath),
+  );
+  const supportsFolderStatus = Boolean(
+    source?.serverConfig?.environment.capabilities.projectFolderAutoSync &&
+    targetEnvironment?.serverConfig?.environment.capabilities.projectFolderAutoSync,
+  );
+  const supportsAutomaticSync = isElectron && supportsFolderStatus;
   const canListFiles =
     !isFolder && source?.serverConfig?.environment.capabilities.ignoredFileListing === true;
   const ignoredFiles = useEnvironmentQuery(
@@ -272,7 +273,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
         }
         const controller = new AbortController();
         copyController.current = controller;
-        if (reuseSyncedFolder) setProgress("Syncing folders…");
+        if (reuseSyncedFolder) setProgress("Preparing continuation…");
         let transcript: File | null = null;
         if (request.sourceThreadRef) {
           const result = await runAtomCommand(
@@ -298,11 +299,14 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
           source: { environmentId: project.environmentId, cwd: project.workspaceRoot },
           targetEnvironmentId: target.environmentId,
           destinationPath: destinationPath.trim(),
+          reuseExisting: supportsFolderStatus,
           signal: controller.signal,
           onProgress: (copied, total) =>
             setProgress(`${formatBytes(copied)} of ${formatBytes(total)}`),
         });
-        if (!existingProject || !reused) {
+        if (reused)
+          setProgress(keepInSync ? "Linking existing folders…" : "Preparing continuation…");
+        if (!existingProject) {
           const created = await runAtomCommand(
             appAtomRegistry,
             projectEnvironment.create,
@@ -318,18 +322,27 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
             );
           }
         }
-        if (keepInSync && !reused)
+        if (keepInSync && !reuseSyncedFolder)
           await linkProjectFolders(
             appAtomRegistry,
             projectEnvironment,
             { environmentId: project.environmentId, cwd: project.workspaceRoot },
             { environmentId: target.environmentId, cwd },
+            {
+              automatic: supportsAutomaticSync,
+              coordinatorEnvironmentId: primaryEnvironmentId ?? project.environmentId,
+            },
           );
         const targetRef = scopeProjectRef(target.environmentId, projectId);
         if (transcript) {
           const draft = await handleNewThread(targetRef);
           if (!draft) return fail(`Folder copied to ${cwd}. Open a new thread there to continue.`);
           const drafts = useComposerDraftStore.getState();
+          drafts.setDraftThreadContext(draft.draftId, {
+            projectRef: targetRef,
+            environmentSelection: "manual",
+            loadBalancedEnvironmentId: null,
+          });
           const accepted = drafts.addFiles(draft.draftId, [
             {
               type: "file",
@@ -396,9 +409,9 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
             </DialogTitle>
             <DialogDescription>
               {reuseSyncedFolder
-                ? "These folders are already linked. Sync changes and deletions, then continue on the other machine. Stop agents working in either folder before syncing."
+                ? "Continue in the existing folder on the other machine. Folder syncing runs separately from the conversation."
                 : isFolder
-                  ? `Copy ${project?.title ?? "this folder"} to another machine. Both copies stay available.${keepInSync ? " Sync runs only when you request it." : " The copies do not sync."}`
+                  ? `Use the existing ${project?.title ?? "folder"} on the other machine, or copy it if missing. Both copies stay available.${keepInSync ? (supportsAutomaticSync ? " Changes sync automatically while T3 is running." : " Sync runs when requested.") : " The copies do not sync."}`
                   : `Clone ${project?.repositoryIdentity?.displayName ?? project?.title} and bring the local files git does not track.`}
               {request.sourceThreadRef
                 ? " Opens a new thread with a saved transcript attached. Review and send your next message there; the original thread stays here."
@@ -421,7 +434,11 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
               </div>
               <div className="flex w-28 flex-col items-center gap-0.5 text-muted-foreground text-xs">
                 <span>
-                  {reuseSyncedFolder ? "Sync folders" : isFolder ? "Copy folder" : "git clone"}
+                  {reuseSyncedFolder
+                    ? "Use existing folder"
+                    : isFolder
+                      ? "Use or copy folder"
+                      : "git clone"}
                 </span>
                 <span className="flex w-full items-center">
                   <span className="h-px flex-1 bg-border" />
@@ -578,7 +595,9 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                   onCheckedChange={(checked) => setKeepInSync(checked === true)}
                   disabled={submitting}
                 />
-                Link folders for manual two-way sync (including deletions)
+                {supportsAutomaticSync
+                  ? "Keep folders in automatic two-way sync (including deletions)"
+                  : "Link folders for manual two-way sync (including deletions)"}
               </label>
             ) : null}
             {isFolder ? (
@@ -589,7 +608,7 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
             ) : null}
             {progress ? (
               <p role="status" className="text-muted-foreground text-sm">
-                {reuseSyncedFolder ? "Syncing folders…" : `Copying ${progress}`}
+                {progress}
               </p>
             ) : null}
             {error ? <p className="text-destructive-foreground text-sm">{error}</p> : null}
@@ -602,12 +621,12 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
               {submitting
                 ? isFolder
                   ? reuseSyncedFolder
-                    ? "Syncing…"
+                    ? "Preparing…"
                     : "Copying…"
                   : "Starting…"
                 : reuseSyncedFolder
-                  ? `Sync and continue on ${target?.label ?? "machine"}`
-                  : `${isFolder ? "Copy" : "Clone"} to ${target?.label ?? "machine"}`}
+                  ? `Continue on ${target?.label ?? "machine"}`
+                  : `${isFolder ? "Continue" : "Clone"} on ${target?.label ?? "machine"}`}
             </Button>
           </DialogFooter>
         </form>

@@ -236,7 +236,7 @@ local work, resolve it yourself before automatic pulls can resume.
 
 For a project without a Git remote, use **Run on → Add to another machine** on web or desktop,
 or **Settings → Projects → Folder transfer and sync** on mobile. Choose a connected machine and
-an unused destination path. The copy includes hidden and binary files, including any secrets in
+a destination folder. An existing folder is reused without overwriting its files. A new copy includes hidden and binary files, including any secrets in
 the folder. The original stays in place. Both servers must support folder transfer. Special files
 and links outside the folder are rejected.
 
@@ -245,16 +245,19 @@ saved transcript attached. Send your next message there to continue. The origina
 on its source machine; attachment metadata in the transcript does not copy old attachment bytes.
 The T3 client stays on your current device; only the destination server runs the new thread.
 
-Select **Link folders for manual two-way sync** while copying to enable **Sync folders** in the
-project's settings. Sync runs only when you request it, with both machines connected. Stop agents
-working in either folder first. Edits and deletions since the previous sync propagate in both
-directions. When both sides change the same path, sync keeps both versions in their folders and
-reports the conflict. Resolve it on disk before trying again. **Unlink sync** keeps both folders
-and stops future syncs. A folder can have one sync partner.
+Select **Keep folders in automatic two-way sync** to propagate edits and deletions between the
+copies. Both servers must support automatic sync. Sync runs while the desktop app is running.
+On macOS it keeps running with its window closed. Fully quitting the app pauses sync; reopening catches up on changes
+made while it was closed. Sync waits for edits to settle and pauses while agents work in either
+folder. Project settings show its status and also offer **Sync folders** and **Unlink sync**.
 
-Once linked, both machines appear under **Run on** for new threads. Choose either machine to
-use its copy. In an existing thread, choose the other machine and **Sync and continue** to sync
-changes into the existing folder and open a continuation with the saved transcript. Finish or
-stop the current turn first. This reuses the destination folder and project; it does not need
-another full copy. A new thread does not sync files automatically, so request a sync first when
-you need changes made on the other machine.
+When both copies already contain different versions of a path, T3 keeps both and reports a
+conflict. Resolve it on disk before syncing again. Linking an existing copy never silently
+chooses one machine's files over the other. **Unlink sync** keeps both folders and stops future
+syncs. A folder can have one sync partner. Older servers and mobile retain manual syncing.
+
+Once linked, both machines appear under **Run on** for new threads. In an existing stopped
+thread, choose the other machine and **Continue** to open a continuation with the saved
+transcript in its existing folder. File syncing runs independently of this handoff.
+
+Automatic sync updates individual files and preserves the folder and unchanged file handles. If interrupted mid-sync, the next comparison resumes from the saved baseline. Conflicting edits are kept on both machines and pause syncing until resolved.

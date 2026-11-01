@@ -1,4 +1,10 @@
-import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts";
+import {
+  OrchestratorMcpFailure,
+  type ServerSettings,
+  setupProfileReadiness,
+} from "@t3tools/contracts";
+import * as SetupProfiles from "../../../setupProfiles/SetupProfiles.ts";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
@@ -44,6 +50,12 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
   t3_environment_read: McpToolAccess.reads(() =>
     Effect.gen(function* () {
       const { descriptor, settings } = yield* access;
+      const setup = yield* Effect.serviceOption(SetupProfiles.SetupProfiles);
+      const readiness = Option.isSome(setup)
+        ? setupProfileReadiness(
+            (yield* setup.value.state.pipe(Effect.mapError(unavailable))).binding,
+          )
+        : null;
       const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
       return {
         environmentId: descriptor.environmentId,
@@ -51,6 +63,7 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         serverVersion: descriptor.serverVersion,
         platform: descriptor.platform,
         preferences: preferences(current),
+        setupProfile: readiness,
       };
     }),
   ),

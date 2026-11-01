@@ -1,3 +1,12 @@
+import * as ComputerUse from "../computer/ComputerUse.ts";
+import {
+  ComputerStandardToolkit,
+  ComputerObserveToolkit,
+  ComputerObserveTool,
+} from "./toolkits/computer/tools.ts";
+import * as ComputerHandlers from "./toolkits/computer/handlers.ts";
+import { MemoryToolkit } from "./toolkits/memory/tools.ts";
+import * as MemoryHandlers from "./toolkits/memory/handlers.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -773,6 +782,28 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
   );
 });
 
+const registerComputerObservation = Effect.fn("McpHttpServer.registerComputerObservation")(
+  function* () {
+    const computer = yield* ComputerUse.ComputerUse;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const built = yield* decodeAsAdvertised(ComputerObserveToolkit);
+    yield* registerImageTool(
+      ComputerObserveTool,
+      (payload) =>
+        built
+          .handle("t3_computer_observe", payload)
+          .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+      (effect) =>
+        effect.pipe(
+          Effect.provideService(ComputerUse.ComputerUse, computer),
+          Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+        ),
+      "computer-observation",
+      "Desktop observation failed. Check the lease and OS permissions.",
+    );
+  },
+);
+
 const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
 const isDeviceToolError = Schema.is(DeviceToolError);
 
@@ -1146,6 +1177,9 @@ export const layerMcpTransport = McpServer.layerHttp({
 
 /** Every tool the T3 MCP server advertises. AgentContextBudget.test.ts measures this set. */
 export const layerTools = Layer.mergeAll(
+  toolkitRegistration(ComputerStandardToolkit, ComputerHandlers.layerStandard),
+  imageToolRegistration(registerComputerObservation(), ComputerHandlers.layerObserve),
+  toolkitRegistration(MemoryToolkit, MemoryHandlers.layer),
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,

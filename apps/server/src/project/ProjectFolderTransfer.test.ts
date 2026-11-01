@@ -14,6 +14,22 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
+const folderWatches = vi.hoisted(
+  () => new Map<string, { changed: () => void; close: ReturnType<typeof vi.fn> }>(),
+);
+vi.mock("node:fs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...original,
+    watch: (root: string, _options: unknown, listener: (event: string, name: string) => void) => {
+      const close = vi.fn();
+      const watcher = { close, unref: () => {}, on: () => watcher };
+      folderWatches.set(root, { changed: () => listener("change", "nested/file"), close });
+      return watcher;
+    },
+  };
+});
 import {
   EnvironmentId,
   ProjectFolderImportInput,
@@ -284,6 +300,128 @@ describe("ProjectFolderTransfer", () => {
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
+  it.effect("automatic sync keeps the folder and unchanged open file handles", () =>
+    Effect.gen(function* () {
+      const { source, service } = yield* fixture;
+      const file = NodePath.join(source, "keep");
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(file, "original");
+        await NodeFSP.writeFile(NodePath.join(source, "remove"), "old");
+      });
+      const handle = yield* Effect.acquireRelease(
+        Effect.promise(() => NodeFSP.open(file, "r")),
+        (handle) => Effect.promise(() => handle.close()),
+      );
+      const inode = (yield* Effect.promise(() => NodeFSP.stat(source))).ino;
+      const snapshot = yield* service.exportFolder({ cwd: source });
+      const imported = yield* service.importFolder({
+        destinationPath: source,
+        previousEntries: snapshot.entries,
+        entries: snapshot.entries.filter((entry) => entry.path === "keep"),
+        incremental: true,
+      });
+      yield* service.finish(imported);
+      yield* Effect.promise(async () => {
+        expect((await NodeFSP.stat(source)).ino).toBe(inode);
+        await NodeFSP.appendFile(file, " plus edit");
+        expect(await handle.readFile("utf8")).toBe("original plus edit");
+        expect(await NodeFSP.readdir(source)).toEqual(["keep"]);
+      });
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect(
+    "tracks nested edits, reattaches after folder replacement, and closes watches on unlink",
+    () =>
+      Effect.gen(function* () {
+        folderWatches.clear();
+        const { source, root, service } = yield* fixture;
+        const state = {
+          peerEnvironmentId: EnvironmentId.make("peer"),
+          peerPath: "/peer",
+          baseline: [],
+          automatic: true,
+        };
+        yield* service.setSync({ cwd: source, state });
+        const first = yield* service.status({ cwd: source });
+        const watch = folderWatches.get(first.cwd)!;
+        watch.changed();
+        const changed = yield* service.status({ cwd: source });
+        expect(changed.revision).not.toBe(first.revision);
+        expect(changed.sync).not.toHaveProperty("baseline");
+        yield* Effect.promise(async () => {
+          await NodeFSP.rename(source, NodePath.join(root, "old"));
+          await NodeFSP.mkdir(source);
+        });
+        const replaced = yield* service.status({ cwd: source });
+        expect(replaced.revision).not.toBe(changed.revision);
+        expect(watch.close).toHaveBeenCalledOnce();
+        const replacement = folderWatches.get(first.cwd)!;
+        yield* service.setSync({ cwd: source, state: null });
+        expect(replacement.close).toHaveBeenCalledOnce();
+        expect((yield* service.status({ cwd: source })).sync).toBeNull();
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect(
+    "links differing existing copies without overwriting them or choosing an unsafe baseline",
+    () =>
+      Effect.gen(function* () {
+        const { source, destination, service } = yield* fixture;
+        const registry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+        const requests = yield* Queue.unbounded<Effect.Effect<void>>();
+        yield* Queue.take(requests).pipe(
+          Effect.flatMap((request) => request),
+          Effect.forever,
+          Effect.forkChild,
+        );
+        const command = commandAdapter(requests);
+        const commands = {
+          folderStatus: command(service.status),
+          folderExport: command(service.exportFolder),
+          folderExportEnd: command(service.exportEnd),
+          folderImport: command(service.importFolder),
+          folderRead: command(service.read),
+          folderWrite: command(service.write),
+          folderFinish: command(service.finish),
+          folderCancel: command(service.cancel),
+          folderSyncSet: command(service.setSync),
+          folderSyncGet: ({ input }: { environmentId: EnvironmentId; input: { cwd: string } }) =>
+            Atom.make(service.getSync(input)),
+        };
+        const local = { environmentId: EnvironmentId.make("local"), cwd: source };
+        const remote = { environmentId: EnvironmentId.make("remote"), cwd: destination };
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(destination);
+          for (const folder of [source, destination])
+            await NodeFSP.writeFile(NodePath.join(folder, "same"), "same");
+          await NodeFSP.writeFile(NodePath.join(source, "different"), "local work");
+          await NodeFSP.writeFile(NodePath.join(destination, "different"), "remote work");
+        });
+        yield* Effect.promise(() =>
+          linkProjectFolders(registry, commands, local, remote, {
+            automatic: true,
+            coordinatorEnvironmentId: local.environmentId,
+          }),
+        );
+        const state = (yield* service.getSync(local))!;
+        expect(state.baseline.map((entry) => entry.path)).toEqual(["same"]);
+        expect(state.automatic).toBe(true);
+        yield* Effect.promise(async () => {
+          await expect(syncProjectFolder(registry, commands, local, state)).rejects.toThrow(
+            "Both folders changed",
+          );
+          expect(await NodeFSP.readFile(NodePath.join(source, "different"), "utf8")).toBe(
+            "local work",
+          );
+          expect(await NodeFSP.readFile(NodePath.join(destination, "different"), "utf8")).toBe(
+            "remote work",
+          );
+        });
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
   it.effect("stores and removes a folder sync baseline outside the project", () =>
     Effect.gen(function* () {
       const { source, service } = yield* fixture;
@@ -315,6 +453,7 @@ describe("ProjectFolderTransfer", () => {
         );
         const command = commandAdapter(requests);
         const commands = {
+          folderStatus: command(service.status),
           folderExport: command(service.exportFolder),
           folderExportEnd: command(service.exportEnd),
           folderImport: command(service.importFolder),
@@ -332,6 +471,10 @@ describe("ProjectFolderTransfer", () => {
           await NodeFSP.writeFile(NodePath.join(source, "local"), "old");
           await NodeFSP.writeFile(NodePath.join(source, "remote"), "old");
           await NodeFSP.writeFile(NodePath.join(source, "delete"), "old");
+          await NodeFSP.symlink("local", NodePath.join(source, "alias"));
+          await NodeFSP.writeFile(NodePath.join(source, "becomes-folder"), "old");
+          await NodeFSP.mkdir(NodePath.join(source, "becomes-file"));
+          await NodeFSP.writeFile(NodePath.join(source, "becomes-file/child"), "old");
         });
         yield* Effect.promise(() =>
           copyProjectFolder(registry, commands, {
@@ -340,12 +483,45 @@ describe("ProjectFolderTransfer", () => {
             destinationPath: destination,
           }),
         );
-        yield* Effect.promise(() => linkProjectFolders(registry, commands, local, remote));
+        // Moving a thread to an existing copy must not copy or synchronize its files.
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(destination, "remote-only"), "keep"),
+        );
+        expect(
+          yield* Effect.promise(() =>
+            copyOrSyncProjectFolder(registry, commands, {
+              source: local,
+              targetEnvironmentId: remote.environmentId,
+              destinationPath: destination,
+              reuseExisting: true,
+            }),
+          ),
+        ).toEqual({
+          cwd: yield* Effect.promise(() => NodeFSP.realpath(destination)),
+          reused: true,
+        });
+        expect(
+          yield* Effect.promise(() =>
+            NodeFSP.readFile(NodePath.join(destination, "remote-only"), "utf8"),
+          ),
+        ).toBe("keep");
+        yield* Effect.promise(() => NodeFSP.rm(NodePath.join(destination, "remote-only")));
+        yield* Effect.promise(() =>
+          linkProjectFolders(registry, commands, local, remote, {
+            automatic: true,
+            coordinatorEnvironmentId: local.environmentId,
+          }),
+        );
         const state = (yield* service.getSync(local))!;
         yield* Effect.promise(async () => {
           await NodeFSP.writeFile(NodePath.join(source, "local"), "local edit");
           await NodeFSP.writeFile(NodePath.join(destination, "remote"), "remote edit");
           await NodeFSP.rm(NodePath.join(destination, "delete"));
+          await NodeFSP.rm(NodePath.join(source, "becomes-folder"));
+          await NodeFSP.mkdir(NodePath.join(source, "becomes-folder"));
+          await NodeFSP.writeFile(NodePath.join(source, "becomes-folder/child"), "new nested file");
+          await NodeFSP.rm(NodePath.join(source, "becomes-file"), { recursive: true });
+          await NodeFSP.writeFile(NodePath.join(source, "becomes-file"), "new file");
         });
         expect(
           yield* Effect.promise(() =>
@@ -358,7 +534,22 @@ describe("ProjectFolderTransfer", () => {
         ).toEqual({ cwd: destination, reused: true });
         yield* Effect.promise(async () => {
           for (const folder of [source, destination]) {
-            expect(await NodeFSP.readdir(folder)).toEqual(["local", "remote"]);
+            expect(await NodeFSP.readdir(folder)).toEqual([
+              "alias",
+              "becomes-file",
+              "becomes-folder",
+              "local",
+              "remote",
+            ]);
+            expect(await NodeFSP.readFile(NodePath.join(folder, "alias"), "utf8")).toBe(
+              "local edit",
+            );
+            expect(
+              await NodeFSP.readFile(NodePath.join(folder, "becomes-folder/child"), "utf8"),
+            ).toBe("new nested file");
+            expect(await NodeFSP.readFile(NodePath.join(folder, "becomes-file"), "utf8")).toBe(
+              "new file",
+            );
             expect(await NodeFSP.readFile(NodePath.join(folder, "local"), "utf8")).toBe(
               "local edit",
             );
@@ -378,6 +569,16 @@ describe("ProjectFolderTransfer", () => {
             "second version",
           );
         });
+        // A quit between the two baseline saves is recoverable when both folders already agree.
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(destination, "local"), "first version"),
+        );
+        const current = (yield* service.getSync(local))!;
+        yield* service.setSync({ cwd: source, state: { ...current, baseline: [] } });
+        yield* Effect.promise(() => syncProjectFolder(registry, commands, local, current));
+        expect((yield* service.getSync(local))!.baseline).toEqual(
+          (yield* service.getSync(remote))!.baseline,
+        );
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });

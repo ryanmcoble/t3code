@@ -918,60 +918,67 @@ it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", ()
   }),
 );
 
-it.effect("ProviderSessionManagerV2 closes every live session for a provider instance", () =>
-  Effect.gen(function* () {
-    const state = yield* Ref.make(emptyState);
-    const effect = Effect.gen(function* () {
-      const eventSink = yield* EventSink.EventSinkV2;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const now = yield* DateTime.now;
-      const firstThreadId = ThreadId.make("thread-provider-session-manager-logout-a");
-      const secondThreadId = ThreadId.make("thread-provider-session-manager-logout-b");
-      const firstProviderSessionId = yield* idAllocator.allocate.providerSession({
-        providerInstanceId: modelSelection.instanceId,
-        threadId: firstThreadId,
-      });
-      const secondProviderSessionId = yield* idAllocator.allocate.providerSession({
-        providerInstanceId: modelSelection.instanceId,
-        threadId: secondThreadId,
+it.effect.each(["closeInstance", "closeIdleInstance"] as const)(
+  "ProviderSessionManagerV2 closes eligible sessions with %s",
+  (action) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const background = yield* Ref.make(true);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const firstThreadId = ThreadId.make("thread-provider-session-manager-logout-a");
+        const secondThreadId = ThreadId.make("thread-provider-session-manager-logout-b");
+        const firstProviderSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: firstThreadId,
+        });
+        const secondProviderSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: secondThreadId,
+        });
+
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: firstThreadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: secondThreadId, now }),
+          ],
+        });
+        yield* manager.open({
+          threadId: firstThreadId,
+          providerSessionId: firstProviderSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId: secondThreadId,
+          providerSessionId: secondProviderSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        assert.isFalse(yield* manager.closeIdleInstance(modelSelection.instanceId));
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        if (action === "closeIdleInstance") yield* Ref.set(background, false);
+        yield* manager[action](modelSelection.instanceId);
+
+        assert.isTrue(Option.isNone(yield* manager.get(firstProviderSessionId)));
+        assert.isTrue(Option.isNone(yield* manager.get(secondProviderSessionId)));
+        assert.equal((yield* Ref.get(state)).closeCount, 2);
       });
 
-      yield* eventSink.write({
-        events: [
-          yield* makeThreadCreatedEvent({ idAllocator, threadId: firstThreadId, now }),
-          yield* makeThreadCreatedEvent({ idAllocator, threadId: secondThreadId, now }),
-        ],
-      });
-      yield* manager.open({
-        threadId: firstThreadId,
-        providerSessionId: firstProviderSessionId,
-        modelSelection,
-        runtimePolicy,
-      });
-      yield* manager.open({
-        threadId: secondThreadId,
-        providerSessionId: secondProviderSessionId,
-        modelSelection,
-        runtimePolicy,
-      });
-
-      yield* manager.closeInstance(modelSelection.instanceId);
-
-      assert.isTrue(Option.isNone(yield* manager.get(firstProviderSessionId)));
-      assert.isTrue(Option.isNone(yield* manager.get(secondProviderSessionId)));
-      assert.equal((yield* Ref.get(state)).closeCount, 2);
-    });
-
-    yield* effect.pipe(
-      Effect.provide(
-        layerTest({
-          state,
-          idleTimeoutMs: 60_000,
-        }),
-      ),
-    );
-  }),
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            hasPendingBackgroundWork: Ref.get(background),
+            idleTimeoutMs: 60_000,
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>

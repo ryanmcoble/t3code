@@ -5,6 +5,7 @@ import {
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   ServerSettings,
+  SetupProfileReadiness,
   ServerSettingsPatch,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -49,6 +50,7 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
     serverVersion: Schema.String,
     platform: ExecutionEnvironmentDescriptor.fields.platform,
     preferences: Schema.Struct(PreferenceFields),
+    setupProfile: SetupProfileReadiness,
   }),
 })
   .annotate(Tool.Readonly, true)

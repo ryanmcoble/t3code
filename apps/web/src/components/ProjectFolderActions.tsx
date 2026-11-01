@@ -1,7 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import { syncProjectFolder } from "@t3tools/client-runtime/operations/project-folder";
+import {
+  linkProjectFolders,
+  syncProjectFolder,
+  unlinkProjectFolders,
+} from "@t3tools/client-runtime/operations/project-folder";
 import type { ScopedProjectRef } from "@t3tools/contracts";
-import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { isElectron } from "../env";
 import { useRef, useState } from "react";
 
 import { useAddProjectTargets } from "../hooks/useAddProjectTargets";
@@ -9,6 +13,8 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useProject } from "../state/entities";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
+import { usePrimaryEnvironmentId } from "../state/environments";
+import { folderSyncMessagesAtom, folderSyncMessageKey } from "../state/projectFolderAutoSync";
 import { useEnvironments } from "../state/environments";
 import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
 import { Button } from "./ui/button";
@@ -17,6 +23,8 @@ import { SettingsRow } from "./settings/settingsLayout";
 export function ProjectFolderActions({ projectRef }: { projectRef: ScopedProjectRef }) {
   const project = useProject(projectRef);
   const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const automaticMessages = useAtomValue(folderSyncMessagesAtom);
   const source = environments.find(
     (environment) => environment.environmentId === projectRef.environmentId,
   );
@@ -40,7 +48,8 @@ export function ProjectFolderActions({ projectRef }: { projectRef: ScopedProject
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
-  if (!supported || !project || project.repositoryIdentity?.locator.remoteUrl) return null;
+  if (!supported || !project || (project.repositoryIdentity?.locator.remoteUrl && !pair))
+    return null;
 
   const act = (unlink: boolean) => {
     if (!pair || pending.current) return;
@@ -55,19 +64,12 @@ export function ProjectFolderActions({ projectRef }: { projectRef: ScopedProject
     if (!pair) return;
     try {
       if (unlink) {
-        for (const folder of [
-          { environmentId: pair.peerEnvironmentId, cwd: pair.peerPath },
+        await unlinkProjectFolders(
+          appAtomRegistry,
+          projectEnvironment,
           { environmentId: projectRef.environmentId, cwd: project.workspaceRoot },
-        ]) {
-          const result = await runAtomCommand(
-            appAtomRegistry,
-            projectEnvironment.folderSyncSet,
-            { environmentId: folder.environmentId, input: { cwd: folder.cwd, state: null } },
-            { label: "Unlink folder sync", reportFailure: false },
-          );
-          if (result._tag === "Failure")
-            return setMessage(String(squashAtomCommandFailure(result)));
-        }
+          pair,
+        );
         setMessage("Folders unlinked. Both copies are kept.");
       } else {
         await syncProjectFolder(
@@ -90,14 +92,29 @@ export function ProjectFolderActions({ projectRef }: { projectRef: ScopedProject
       description={
         pair ? (
           <>
-            Manual two-way sync with {pair.peerPath}. Sync also applies file deletions. Stop agents
-            working in either folder before syncing.
+            {pair.automatic ? "Automatic" : "Manual"} two-way sync with {pair.peerPath}, including
+            deletions.
+            {pair.automatic
+              ? " Runs while T3 is open, including with its window closed. Pauses while agents work."
+              : " Stop agents working in either folder before syncing."}
           </>
         ) : (
           "Copy this folder to another connected machine while keeping the original."
         )
       }
-      status={message ? <span role="status">{message}</span> : undefined}
+      status={
+        message ||
+        automaticMessages.get(
+          folderSyncMessageKey(projectRef.environmentId, project.workspaceRoot),
+        ) ? (
+          <span role="status">
+            {message ??
+              automaticMessages.get(
+                folderSyncMessageKey(projectRef.environmentId, project.workspaceRoot),
+              )}
+          </span>
+        ) : undefined
+      }
       control={
         <div className="flex flex-wrap items-center gap-2">
           {targets.length > 0 && !pair ? (
@@ -119,6 +136,36 @@ export function ProjectFolderActions({ projectRef }: { projectRef: ScopedProject
               >
                 {busy ? "Working…" : "Sync folders"}
               </Button>
+              {isElectron &&
+              !pair.automatic &&
+              source?.serverConfig?.environment.capabilities.projectFolderAutoSync &&
+              environments.find((env) => env.environmentId === pair.peerEnvironmentId)?.serverConfig
+                ?.environment.capabilities.projectFolderAutoSync ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy || !canWrite || !canWritePeer}
+                  onClick={() => {
+                    if (!primaryEnvironmentId) return;
+                    setBusy(true);
+                    void linkProjectFolders(
+                      appAtomRegistry,
+                      projectEnvironment,
+                      { environmentId: projectRef.environmentId, cwd: project.workspaceRoot },
+                      { environmentId: pair.peerEnvironmentId, cwd: pair.peerPath },
+                      { automatic: true, coordinatorEnvironmentId: primaryEnvironmentId },
+                    )
+                      .catch((cause) =>
+                        setMessage(
+                          cause instanceof Error ? cause.message : "Could not enable sync.",
+                        ),
+                      )
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  Enable automatic sync
+                </Button>
+              ) : null}
               <Button
                 variant="ghost"
                 size="sm"

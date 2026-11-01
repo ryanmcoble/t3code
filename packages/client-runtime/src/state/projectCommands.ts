@@ -207,6 +207,10 @@ export function createProjectEnvironmentAtoms<R, E>(
       scheduler: projectScheduler,
       concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
     }),
+    folderStatus: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:folder-status",
+      tag: WS_METHODS.projectsFolderStatus,
+    }),
     folderSyncGet: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:folder-sync-get",
       tag: WS_METHODS.projectsFolderSyncGet,

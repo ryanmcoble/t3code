@@ -357,19 +357,34 @@ export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId:
 });
 
 // Last match wins: deny all threads' T3 servers, then allow only this thread's.
-const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
-  mcpServerName === null
+const mcpRules = (
+  mcpServerName: string | null,
+  setupPrefix: string | null,
+): ReadonlyArray<Rule> => [
+  { action: "t3-code-*", resource: "*", effect: "deny" },
+  { action: "t3-setup-*", resource: "*", effect: "deny" },
+  ...(mcpServerName === null
     ? []
-    : [
-        { action: "t3-code-*", resource: "*", effect: "deny" },
-        { action: `${mcpServerName}_*`, resource: "*", effect: "allow" },
-      ];
+    : [{ action: `${mcpServerName}_*`, resource: "*", effect: "allow" as const }]),
+  ...(setupPrefix === null
+    ? []
+    : [{ action: `${setupPrefix}*`, resource: "*", effect: "ask" as const }]),
+];
+
+const setupMcpPrefix = Effect.fn("setupMcpPrefix")(function* (threadId: string) {
+  const crypto = yield* Crypto.Crypto;
+  const digest = yield* crypto
+    .digest("SHA-256", new TextEncoder().encode(threadId))
+    .pipe(Effect.orDie);
+  return `t3-setup-${Hex.encode(digest).slice(0, 16)}-`;
+});
 
 const sessionRules = (
   policy: RulesPolicy,
   paths: ReadonlyArray<Rule>,
   grants: ReadonlyArray<Rule>,
   mcpServerName: string | null,
+  setupPrefix: string | null,
 ): ReadonlyArray<Rule> => [
   ...(policy.runtimeMode === "full-access"
     ? [rule("*", "allow")]
@@ -382,7 +397,13 @@ const sessionRules = (
   // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
   ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
   ...paths,
-  ...mcpRules(mcpServerName),
+  ...mcpRules(mcpServerName, setupPrefix).map((entry) =>
+    entry.action.startsWith("t3-setup-") &&
+    entry.effect === "ask" &&
+    policy.runtimeMode === "full-access"
+      ? { ...entry, effect: "allow" as const }
+      : entry,
+  ),
 ];
 
 const sameRules = (left: ReadonlyArray<Rule> | undefined, right: ReadonlyArray<Rule>) =>
@@ -2759,6 +2780,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         paths,
         policy.runtimeMode === "full-access" ? [] : thread.grants,
         appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),
+        appThreadId === null
+          ? null
+          : yield* setupMcpPrefix(appThreadId).pipe(Effect.provideService(Crypto.Crypto, crypto)),
       );
     });
 
@@ -2988,6 +3012,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       return files;
     });
 
+    const setupServers = new Map<string, { name: string; directory: string }>();
     const removeMcp = (mcp: { readonly name: string; readonly directory: string }) =>
       Effect.suspend(() =>
         client.mcp.remove({ server: mcp.name, location: { directory: mcp.directory } }),
@@ -2995,7 +3020,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     yield* Effect.addFinalizer(() =>
       Effect.forEach(
-        [...threads.values()].flatMap((state) => (state.mcp === undefined ? [] : [state.mcp])),
+        [
+          ...setupServers.values(),
+          ...[...threads.values()].flatMap((state) => (state.mcp === undefined ? [] : [state.mcp])),
+        ],
         removeMcp,
         { concurrency: 8, discard: true },
       ),
@@ -3009,6 +3037,36 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const mcpSession = yield* mcpSessions.read(turnInput.threadId);
       const directory = turnInput.runtimePolicy.cwd ?? host.paths.cwd;
       const name = yield* mcpServerNameFor(turnInput.threadId);
+      if (mcpSession !== undefined && !connection.external) {
+        const prefix = yield* setupMcpPrefix(turnInput.threadId).pipe(
+          Effect.provideService(Crypto.Crypto, crypto),
+        );
+        for (const c of mcpSession.setupConnections ?? []) {
+          const suffix = Hex.encode(
+            yield* crypto.digest("SHA-256", new TextEncoder().encode(c.name)).pipe(Effect.orDie),
+          ).slice(0, 8);
+          const server = `${prefix}${c.name.slice(0, 20)}-${suffix}`;
+          if (setupServers.has(`${directory}:${server}`)) continue;
+          yield* client.mcp.add({
+            server,
+            location: { directory },
+            config:
+              c.transport === "http"
+                ? new Mcp.RemoteConfig({
+                    type: "remote",
+                    url: c.url!,
+                    headers: { ...c.headers },
+                    oauth: false,
+                  })
+                : new Mcp.LocalConfig({
+                    type: "local",
+                    command: [c.command!, ...c.args],
+                    environment: { ...c.environment },
+                  }),
+          });
+          setupServers.set(`${directory}:${server}`, { name: server, directory });
+        }
+      }
       // An external server may not reach T3's MCP endpoint, as with 1.x.
       const wanted =
         mcpSession === undefined || connection.external

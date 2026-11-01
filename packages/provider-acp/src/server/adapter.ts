@@ -607,6 +607,7 @@ function acpMcpContext(
   // codex-acp 1.2.0 and pi-acp drop injected HTTP servers; bridge through stdio instead.
   return {
     servers: [
+      ...McpProviderSession.setupAcpMcpServers(session),
       {
         name: "t3-code",
         command: self.command,
@@ -618,7 +619,10 @@ function acpMcpContext(
         ],
       },
     ],
-    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
+    acpServers: [
+      ...McpProviderSession.setupAcpMcpServers(session),
+      { type: "acp", name: "t3-code", serverId: "t3-code" },
+    ],
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
     processEnvironment: {
