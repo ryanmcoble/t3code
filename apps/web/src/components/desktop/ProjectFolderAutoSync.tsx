@@ -87,59 +87,61 @@ function FolderSyncWorker({
       report,
     });
     const tick = async () => {
-      try {
-        const statuses = await Promise.all(
-          [
-            { environmentId: project.environmentId, cwd: project.workspaceRoot },
-            { environmentId: peerEnvironmentId, cwd: peerPath },
-          ].map(async (folder) => {
-            const result = await runAtomCommand(
-              appAtomRegistry,
-              projectEnvironment.folderStatus,
-              { environmentId: folder.environmentId, input: { cwd: folder.cwd } },
-              { label: "Check folder changes", reportFailure: false },
-            );
-            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-            return result.value;
-          }),
-        );
-        if (controller.signal.aborted) return;
-        const [left, right] = statuses;
-        const linked =
-          left!.sync?.automatic &&
-          right!.sync?.automatic &&
-          left!.sync.peerEnvironmentId === peerEnvironmentId &&
-          right!.sync.peerEnvironmentId === project.environmentId &&
-          normalizeProjectPathForComparison(peerPath) ===
-            normalizeProjectPathForComparison(left!.sync.peerPath) &&
-          normalizeProjectPathForComparison(project.workspaceRoot) ===
-            normalizeProjectPathForComparison(right!.sync.peerPath) &&
-          left!.sync.coordinatorEnvironmentId === primaryEnvironmentId &&
-          right!.sync.coordinatorEnvironmentId === primaryEnvironmentId;
-        if (!linked) {
-          appAtomRegistry.refresh(query);
-          monitor.reset();
-          return;
+      return await (async () => {
+        try {
+          const statuses = await Promise.all(
+            [
+              { environmentId: project.environmentId, cwd: project.workspaceRoot },
+              { environmentId: peerEnvironmentId, cwd: peerPath },
+            ].map(async (folder) => {
+              const result = await runAtomCommand(
+                appAtomRegistry,
+                projectEnvironment.folderStatus,
+                { environmentId: folder.environmentId, input: { cwd: folder.cwd } },
+                { label: "Check folder changes", reportFailure: false },
+              );
+              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+              return result.value;
+            }),
+          );
+          if (controller.signal.aborted) return;
+          const [left, right] = statuses;
+          const linked =
+            left!.sync?.automatic &&
+            right!.sync?.automatic &&
+            left!.sync.peerEnvironmentId === peerEnvironmentId &&
+            right!.sync.peerEnvironmentId === project.environmentId &&
+            normalizeProjectPathForComparison(peerPath) ===
+              normalizeProjectPathForComparison(left!.sync.peerPath) &&
+            normalizeProjectPathForComparison(project.workspaceRoot) ===
+              normalizeProjectPathForComparison(right!.sync.peerPath) &&
+            left!.sync.coordinatorEnvironmentId === primaryEnvironmentId &&
+            right!.sync.coordinatorEnvironmentId === primaryEnvironmentId;
+          if (!linked) {
+            appAtomRegistry.refresh(query);
+            monitor.reset();
+            return;
+          }
+          const permitted = [project.environmentId, peerEnvironmentId].every(
+            (id) =>
+              readEnvironmentScope(id, AuthFilesystemReadScope) &&
+              readEnvironmentScope(id, AuthFilesystemWriteScope),
+          );
+          await monitor.observe({
+            revision: JSON.stringify(statuses.map((status) => status.revision)),
+            ready: Boolean(left!.exists && right!.exists && permitted),
+            busy: busy(),
+            now: Date.now(),
+          });
+        } catch {
+          if (!controller.signal.aborted) {
+            monitor.reset();
+            report("Waiting for both machines…");
+          }
         }
-        const permitted = [project.environmentId, peerEnvironmentId].every(
-          (id) =>
-            readEnvironmentScope(id, AuthFilesystemReadScope) &&
-            readEnvironmentScope(id, AuthFilesystemWriteScope),
-        );
-        await monitor.observe({
-          revision: JSON.stringify(statuses.map((status) => status.revision)),
-          ready: Boolean(left!.exists && right!.exists && permitted),
-          busy: busy(),
-          now: Date.now(),
-        });
-      } catch {
-        if (!controller.signal.aborted) {
-          monitor.reset();
-          report("Waiting for both machines…");
-        }
-      } finally {
+      })().finally(() => {
         if (!controller.signal.aborted) timer = window.setTimeout(() => void tick(), 1500);
-      }
+      });
     };
     void tick();
     return () => {

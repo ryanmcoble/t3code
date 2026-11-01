@@ -42,13 +42,13 @@ export function SetupProfileSection({ environmentId }: { readonly environmentId:
   const run = async (input: Parameters<typeof command>[0]["input"]) => {
     setBusy(true);
     setError(null);
-    try {
+    return await (async () => {
       const result = await command({ environmentId, input });
       if (isAtomCommandInterrupted(result) || result._tag === "Failure")
         setError("The setup operation failed. Check access and try again.");
-    } finally {
+    })().finally(() => {
       setBusy(false);
-    }
+    });
   };
   if (config?.environment.capabilities.setupProfiles !== 1) return null;
   const url = linkableMachines({
@@ -140,7 +140,7 @@ export function SetupProfileSection({ environmentId }: { readonly environmentId:
             if (!url) return;
             setBusy(true);
             setError(null);
-            try {
+            return await (async () => {
               const result = await enroll({
                 ownerId: sourceId,
                 destinationId: environmentId,
@@ -150,9 +150,9 @@ export function SetupProfileSection({ environmentId }: { readonly environmentId:
               });
               if (isAtomCommandInterrupted(result) || result._tag === "Failure")
                 setError("Could not subscribe to this setup profile.");
-            } finally {
+            })().finally(() => {
               setBusy(false);
-            }
+            });
           }}
         />
       ))}

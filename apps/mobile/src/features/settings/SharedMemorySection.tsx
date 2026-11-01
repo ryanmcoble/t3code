@@ -84,7 +84,7 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
   const run = async (input: Parameters<typeof command>[0]["input"]) => {
     setBusy(true);
     setError(null);
-    try {
+    return await (async () => {
       const value = await command({ environmentId, input });
       if (isAtomCommandInterrupted(value) || value._tag === "Failure") {
         setError("Memory could not be changed. Check access and refresh.");
@@ -93,9 +93,9 @@ export function SharedMemorySection({ environmentId }: { readonly environmentId:
       state.refresh();
       notes.refresh();
       return true;
-    } finally {
+    })().finally(() => {
       setBusy(false);
-    }
+    });
   };
   if (!supported) return null;
   return (

@@ -89,7 +89,7 @@ export function SetupProfilesSettings({
   const execute = async (input: SetupCommandInput | ReadonlyArray<SetupCommandInput>) => {
     setBusy(true);
     setError(null);
-    try {
+    return await (async () => {
       const commands = "operation" in input ? [input] : input;
       for (const command of commands) {
         const result = await run({ environmentId, input: command });
@@ -101,10 +101,10 @@ export function SetupProfilesSettings({
         }
       }
       return true;
-    } finally {
+    })().finally(() => {
       state.refresh();
       setBusy(false);
-    }
+    });
   };
   const edit = (profile: SetupProfile | null) => {
     setEditing(profile);
@@ -390,7 +390,7 @@ export function SetupProfilesSettings({
               onClick={async () => {
                 setBusy(true);
                 setError(null);
-                try {
+                return await (async () => {
                   const result = await importSetup({
                     environmentId,
                     input: {
@@ -425,9 +425,9 @@ export function SetupProfilesSettings({
                     ).values(),
                   ]);
                   setNotice(result.value.warnings.join(" "));
-                } finally {
+                })().finally(() => {
                   setBusy(false);
-                }
+                });
               }}
             >
               Import selected setup
@@ -577,7 +577,7 @@ export function SetupProfilesSettings({
               disabled={!grantProfile || !destinationId}
               onClick={async () => {
                 setBusy(true);
-                try {
+                return await (async () => {
                   const result = await grant({
                     environmentId,
                     input: {
@@ -589,9 +589,9 @@ export function SetupProfilesSettings({
                   if (!isAtomCommandInterrupted(result) && result._tag === "Success")
                     setIssuedToken(result.value.token);
                   else setError("Subscription access could not be created.");
-                } finally {
+                })().finally(() => {
                   setBusy(false);
-                }
+                });
               }}
             >
               Create subscription access

@@ -99,7 +99,7 @@ export function SetupProfileEnrollment({
         onClick={async () => {
           setBusy(true);
           setError(null);
-          try {
+          return await (async () => {
             const result = await enroll({
               ownerId,
               destinationId,
@@ -112,9 +112,9 @@ export function SetupProfileEnrollment({
                 "Could not enroll this environment. Check access on both machines and try again.",
               );
             else onEnrolled();
-          } finally {
+          })().finally(() => {
             setBusy(false);
-          }
+          });
         }}
       >
         Apply profile and keep synchronized

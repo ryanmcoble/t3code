@@ -86,7 +86,7 @@ export function SharedMemorySettings({
   const run = async (input: Parameters<typeof command>[0]["input"]) => {
     setBusy(true);
     setError(null);
-    try {
+    return await (async () => {
       const value = await command({ environmentId, input });
       if (isAtomCommandInterrupted(value) || value._tag === "Failure") {
         setError("Memory could not be updated. Check scope access and refresh.");
@@ -95,9 +95,9 @@ export function SharedMemorySettings({
       state.refresh();
       results.refresh();
       return true;
-    } finally {
+    })().finally(() => {
       setBusy(false);
-    }
+    });
   };
   if (!supported) return null;
   return (
