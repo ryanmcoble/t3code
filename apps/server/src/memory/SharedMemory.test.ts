@@ -747,6 +747,23 @@ it.effect(
     ),
 );
 
+it.effect("retains receipts for production-length orchestration run identifiers", () =>
+  withMemory(
+    Effect.gen(function* () {
+      const memory = yield* SharedMemory.SharedMemory;
+      const id =
+        "run:thread:project:memory-rollout-project-39189581-b3c0-4545-824c-966375de7f54:609bce32-34c7-40ba-abf0-547adf0d80e8:91f4438b-6816-4bfc-894b-ac86e135f31d";
+      yield* memory.recall({
+        id,
+        context: { ...actor, cwd: "/repo", projectRoot: "/repo" },
+        text: "hello",
+      });
+      assert.equal((yield* memory.status(actor.threadId)).receipt?.id, id);
+      assert.equal((yield* memory.state).receipts?.[0]?.id, id);
+    }),
+  ),
+);
+
 it.effect("does not choose arbitrarily between overlapping writable project categories", () =>
   withMemory(
     Effect.gen(function* () {

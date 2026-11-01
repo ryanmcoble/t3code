@@ -139,7 +139,8 @@ export const MemoryTurnContext = Schema.Struct({
 });
 export type MemoryTurnContext = typeof MemoryTurnContext.Type;
 export const MemoryRecallReceipt = Schema.Struct({
-  id: Id,
+  // Receipts use composite orchestration run identifiers rather than memory entry IDs.
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
   threadId: ThreadId,
   createdAt: Schema.String,
   status: Schema.Literals(["ready", "disabled", "unavailable"]),
