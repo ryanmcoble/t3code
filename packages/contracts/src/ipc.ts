@@ -1026,6 +1026,10 @@ export interface DesktopBridge {
     prepareRecording: (id: string) => Promise<void>;
     finishRecording: (id: string) => Promise<Uint8Array>;
     cancelRecording: (id: string) => Promise<void>;
+    /** Input loudness (0...1) for an active native recording, about 20 times a second. */
+    onRecordingLevel?: (
+      listener: (event: { readonly id: string; readonly level: number }) => void,
+    ) => () => void;
     onShortcut: (listener: (event: DesktopVoiceShortcutEvent) => void) => () => void;
   };
   getAppBranding: () => DesktopAppBranding | null;

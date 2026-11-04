@@ -82,6 +82,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.VOICE_INPUT_RECORD_PREPARE_CHANNEL, id),
     finishRecording: (id) => ipcRenderer.invoke(IpcChannels.VOICE_INPUT_RECORD_FINISH_CHANNEL, id),
     cancelRecording: (id) => ipcRenderer.invoke(IpcChannels.VOICE_INPUT_RECORD_CANCEL_CHANNEL, id),
+    onRecordingLevel: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, value: { id: string; level: number }) => {
+        if (typeof value?.id === "string" && typeof value.level === "number") listener(value);
+      };
+      ipcRenderer.on(IpcChannels.VOICE_INPUT_RECORD_LEVEL_CHANNEL, handler);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.VOICE_INPUT_RECORD_LEVEL_CHANNEL, handler);
+    },
     configureShortcut: (config) =>
       ipcRenderer.invoke(IpcChannels.VOICE_INPUT_SHORTCUT_CONFIG_CHANNEL, config),
     onShortcut: (listener) => {

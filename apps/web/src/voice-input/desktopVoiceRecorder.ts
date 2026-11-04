@@ -1,12 +1,14 @@
 import type { DesktopBridge } from "@t3tools/contracts";
 import { VoiceTranscriptionError, type VoiceRecorder } from "@t3tools/client-runtime/voice-input";
 import { randomUUID } from "~/lib/utils";
+import { pushVoiceLevel, resetVoiceLevels } from "./voiceLevels";
 
 export class DesktopVoiceRecorder implements VoiceRecorder {
   uri: string | null = null;
   private id: string | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private detachAbort: (() => void) | undefined;
+  private detachLevels: (() => void) | undefined;
 
   constructor(
     private readonly bridge: DesktopBridge["voiceInput"],
@@ -35,6 +37,12 @@ export class DesktopVoiceRecorder implements VoiceRecorder {
   }
 
   record({ forDuration }: { readonly forDuration: number }) {
+    const id = this.id;
+    this.detachLevels?.();
+    resetVoiceLevels();
+    this.detachLevels = this.bridge.onRecordingLevel?.((event) => {
+      if (event.id === id) pushVoiceLevel(event.level);
+    });
     this.timer = setTimeout(() => {
       void this.stop().then(
         () => this.onFinished(this.uri, null),
@@ -47,8 +55,15 @@ export class DesktopVoiceRecorder implements VoiceRecorder {
     }, forDuration * 1000);
   }
 
+  private stopLevels() {
+    this.detachLevels?.();
+    this.detachLevels = undefined;
+    resetVoiceLevels();
+  }
+
   async stop() {
     clearTimeout(this.timer);
+    this.stopLevels();
     if (!this.id) return;
     const audio = await this.bridge.finishRecording(this.id);
     this.uri = URL.createObjectURL(new Blob([new Uint8Array(audio)], { type: "audio/wav" }));
@@ -56,6 +71,7 @@ export class DesktopVoiceRecorder implements VoiceRecorder {
 
   async release() {
     clearTimeout(this.timer);
+    this.stopLevels();
     this.detachAbort?.();
     this.detachAbort = undefined;
     const id = this.id;
