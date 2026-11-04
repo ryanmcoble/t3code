@@ -971,6 +971,7 @@ export const layerQueryRunner: Layer.Layer<
             env: {
               ...(sdkOptions.env ?? hostEnvironment),
               [PortScanner.AGENT_THREAD_ENV]: input.threadId,
+              [PortScanner.AGENT_PROVIDER_ENV]: "claude",
             },
           };
           // The SDK can prepend a scope wrapper to native binaries; script entries run through node.

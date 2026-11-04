@@ -319,6 +319,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
     flavor,
+    agentName: isCopilot ? "copilot" : isClaude ? "claude" : registryAgentId || "acp",
     selfInvocation: options.selfInvocation,
     ...(options.continuationRequests === undefined
       ? {}
