@@ -3,9 +3,9 @@ import { memoryRulesDraftError, memoryRulesFromDraft } from "./memoryRules.ts";
 
 describe("memory category drafts", () => {
   const draft = {
-    folderRoots: "/home/ryan/company\n/home/ryan/company\n",
-    repositoryRoots: "/home/ryan/crypto/app",
-    exclusions: "/home/ryan/company/private\n/home/ryan/crypto/app/scratch",
+    folderRoots: "/home/user/company\n/home/user/company\n",
+    repositoryRoots: "/home/user/project/app",
+    exclusions: "/home/user/company/private\n/home/user/project/app/scratch",
     descendants: true,
   };
   it("deduplicates roots and assigns each exclusion to its own location", () => {
@@ -13,21 +13,21 @@ describe("memory category drafts", () => {
     expect(memoryRulesFromDraft(draft)).toEqual([
       {
         kind: "folder",
-        path: "/home/ryan/company",
+        path: "/home/user/company",
         descendants: true,
-        exclusions: ["/home/ryan/company/private"],
+        exclusions: ["/home/user/company/private"],
       },
       {
         kind: "repository",
-        path: "/home/ryan/crypto/app",
+        path: "/home/user/project/app",
         descendants: true,
-        exclusions: ["/home/ryan/crypto/app/scratch"],
+        exclusions: ["/home/user/project/app/scratch"],
       },
     ]);
   });
   it("rejects unmatched exclusions rather than silently widening a category", () => {
     expect(
-      memoryRulesDraftError({ ...draft, exclusions: "/home/ryan/company-other" }),
+      memoryRulesDraftError({ ...draft, exclusions: "/home/user/company-other" }),
     ).not.toBeNull();
     expect(
       memoryRulesDraftError({ ...draft, folderRoots: "", repositoryRoots: "" }),
