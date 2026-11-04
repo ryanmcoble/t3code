@@ -81,6 +81,8 @@ import Migration0074 from "./Migrations/074_SetupProfiles.ts";
 import Migration0075 from "./Migrations/075_SharedCapabilities.ts";
 import Migration0076 from "./Migrations/076_ComputerInheritance.ts";
 
+import Migration0077 from "./Migrations/077_MemoryLifecycle.ts";
+
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -159,6 +161,7 @@ const migrationEntries = [
   [74, "SetupProfiles", Migration0074],
   [75, "SharedCapabilities", Migration0075],
   [76, "ComputerInheritance", Migration0076],
+  [77, "MemoryLifecycle", Migration0077],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -1,3 +1,5 @@
+import * as ProjectStoreV2 from "./orchestration-v2/ProjectStore.ts";
+import * as MemoryTurnObserver from "./memory/MemoryTurnObserver.ts";
 import * as ComputerUse from "./computer/ComputerUse.ts";
 import * as ComputerDriver from "./computer/ComputerDriver.ts";
 import * as SharedMemory from "./memory/SharedMemory.ts";
@@ -555,6 +557,12 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
 );
 
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
+  Layer.provide(
+    MemoryTurnObserver.layer.pipe(
+      Layer.provide(ProjectionStoreV2.layer),
+      Layer.provide(ProjectStoreV2.layer),
+    ),
+  ),
   Layer.provide(layerScheduledTaskWebhookOrigin),
   Layer.provide(ProviderEventIngestor.layerAnalytics),
   Layer.provide(layerCheckpointStore),

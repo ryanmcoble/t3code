@@ -1,3 +1,4 @@
+import * as MemoryTurnObserver from "../memory/MemoryTurnObserver.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
@@ -23,6 +24,14 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
   const layer = RunFinalization.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.succeed(MemoryTurnObserver.MemoryTurnObserver, {
+          recall: () => Effect.succeed(""),
+          delivered: () => Effect.void,
+          complete: () =>
+            Effect.sync(() => {
+              captured.push("memory");
+            }),
+        }),
         Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({
           execute: () =>
             Effect.sync(() => {
@@ -54,7 +63,7 @@ it.effect("completes finalization when the post-checkpoint workspace refresh fai
   return Effect.gen(function* () {
     const service = yield* RunFinalization.RunFinalizationService;
     yield* service.finalize({ threadId, runId, scopeId });
-    assert.deepEqual(captured, ["checkpoint", "refresh"]);
+    assert.deepEqual(captured, ["checkpoint", "memory", "refresh"]);
   }).pipe(Effect.provide(layer));
 });
 

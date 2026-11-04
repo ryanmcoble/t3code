@@ -430,6 +430,12 @@ export interface AcpAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly flavor: AcpAdapterV2Flavor;
   readonly selfInvocation: SelfInvocation;
+  /**
+   * Agent name exported as T3CODE_PROVIDER beside T3CODE_THREAD_ID, so tools the
+   * agent starts (hooks, MCP servers) can tell their T3 thread from one inherited
+   * by an unrelated process. Defaults to the driver.
+   */
+  readonly agentName?: string;
   readonly clientTerminals?: {
     readonly environment?: NodeJS.ProcessEnv;
     readonly shellCommands?: boolean;
@@ -597,12 +603,24 @@ interface AcpMcpContext {
   readonly authorization?: string;
 }
 
+/** Identifies the T3 thread to the agent process and everything it starts. */
+export function acpThreadEnvironment(
+  thread: { readonly threadId: string; readonly agentName: string } | undefined,
+): NodeJS.ProcessEnv {
+  return thread === undefined
+    ? {}
+    : { T3CODE_THREAD_ID: thread.threadId, T3CODE_PROVIDER: thread.agentName };
+}
+
 function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
+  thread?: { readonly threadId: string; readonly agentName: string },
 ): AcpMcpContext {
   if (session === undefined) {
-    return { servers: [], acpServers: [] };
+    return thread === undefined
+      ? { servers: [], acpServers: [] }
+      : { servers: [], acpServers: [], processEnvironment: acpThreadEnvironment(thread) };
   }
   // codex-acp 1.2.0 and pi-acp drop injected HTTP servers; bridge through stdio instead.
   return {
@@ -626,6 +644,7 @@ function acpMcpContext(
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
     processEnvironment: {
+      ...acpThreadEnvironment(thread),
       T3_ACP_MCP_ENDPOINT: session.endpoint,
       T3_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
       T3_ACP_MCP_NODE: self.command,
@@ -1364,10 +1383,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { flavor, selfInvocation: self } = options;
+  const agentName = options.agentName ?? String(flavor.driver);
   const readMcpContext = (threadId: ThreadId | null) =>
     threadId === null
       ? Effect.succeed(acpMcpContext(undefined, self))
-      : mcpSessions.read(threadId).pipe(Effect.map((session) => acpMcpContext(session, self)));
+      : mcpSessions
+          .read(threadId)
+          .pipe(
+            Effect.map((session) =>
+              acpMcpContext(session, self, { threadId: String(threadId), agentName }),
+            ),
+          );
   const driver = flavor.driver;
   const continuationRequests = options.continuationRequests;
   const postSettleContinuationEnabled =

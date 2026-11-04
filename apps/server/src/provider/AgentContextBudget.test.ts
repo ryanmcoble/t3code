@@ -1,3 +1,4 @@
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { SharedMemory } from "../memory/SharedMemory.ts";
 import { ComputerUse } from "../computer/ComputerUse.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -48,6 +49,7 @@ import budget from "./agentContextBudget.json" with { type: "json" };
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
   Layer.mock(SharedMemory)({}),
+  Layer.mock(ProjectStoreV2)({}),
   Layer.mock(ComputerUse)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),

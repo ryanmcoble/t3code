@@ -3440,6 +3440,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             model,
             permissions,
             ...(title === undefined ? {} : { title }),
+            // OpenCode servers are shared across threads; plugins read the T3
+            // thread from session metadata instead of the process environment.
+            metadata: { t3ThreadId: String(threadInput.threadId) },
           });
           const createdAt = yield* DateTime.now;
           const providerThread: OrchestrationV2ProviderThread = {

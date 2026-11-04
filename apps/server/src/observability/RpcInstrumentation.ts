@@ -14,6 +14,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.computerUseState]: "computerUse",
   [WS_METHODS.computerUseCommand]: "computerUse",
   [WS_METHODS.memoryState]: "memory",
+  [WS_METHODS.memoryStatus]: "memory",
   [WS_METHODS.memoryQuery]: "memory",
   [WS_METHODS.memoryCommand]: "memory",
   [WS_METHODS.memoryExport]: "memory",

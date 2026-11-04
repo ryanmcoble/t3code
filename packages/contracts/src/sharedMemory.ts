@@ -19,10 +19,22 @@ export const MemoryScopeReference = Schema.Struct({
   ),
   access: MemoryAccess,
 });
+export const MemoryPathRule = Schema.Struct({
+  kind: Schema.Literals(["folder", "repository"]),
+  path: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  descendants: Schema.Boolean,
+  exclusions: Schema.Array(Schema.String.check(Schema.isMaxLength(4096))).check(
+    Schema.isMaxLength(64),
+  ),
+});
+export type MemoryPathRule = typeof MemoryPathRule.Type;
 export const MemoryScope = Schema.Struct({
   id: Id,
   name: Name,
   kind: Schema.Literals(["personal", "company", "project"]),
+  temporary: Schema.optionalKey(Schema.Boolean),
+  allProjects: Schema.optionalKey(Schema.Boolean),
+  rules: Schema.optionalKey(Schema.Array(MemoryPathRule).check(Schema.isMaxLength(64))),
   projectIds: Schema.Array(ProjectId),
   providerInstanceIds: Schema.Array(ProviderInstanceId),
   writableProviderInstanceIds: Schema.Array(ProviderInstanceId),
@@ -51,6 +63,8 @@ export const MemoryEntry = Schema.Struct({
   createdAt: Schema.String,
   supersedes: Schema.NullOr(Id),
   supersededBy: Schema.NullOr(Id),
+  pinned: Schema.optionalKey(Schema.Boolean),
+  expiresAt: Schema.optionalKey(Schema.String),
   deleted: Schema.Boolean,
 });
 export type MemoryEntry = typeof MemoryEntry.Type;
@@ -73,12 +87,19 @@ export const MemoryWrite = Schema.Struct({
   content: MemoryEntry.fields.content,
   source: MemorySource,
   supersedes: Schema.optionalKey(Id),
+  pinned: Schema.optionalKey(Schema.Boolean),
+  expiresAt: Schema.optionalKey(Schema.String),
 });
+export const MemoryForget = Schema.Struct({ scopeId: Id, entryId: Id });
 export const MemoryRemoteBinding = Schema.Struct({
+  kind: Schema.optionalKey(MemoryScope.fields.kind),
+  temporary: Schema.optionalKey(Schema.Boolean),
   scopeId: Id,
   name: Name,
   ownerEnvironmentId: EnvironmentId,
   sourceUrl: Schema.String,
+  allProjects: Schema.optionalKey(Schema.Boolean),
+  rules: Schema.optionalKey(Schema.Array(MemoryPathRule).check(Schema.isMaxLength(64))),
   projectIds: Schema.Array(ProjectId),
   providerInstanceIds: Schema.Array(ProviderInstanceId),
   access: MemoryAccess,
@@ -89,7 +110,77 @@ export const MemoryGrantSummary = Schema.Struct({
   destinationEnvironmentId: EnvironmentId,
   access: MemoryAccess,
 });
+export const MemorySettings = Schema.Struct({
+  revision: Schema.Int,
+  recallEnabled: Schema.Boolean,
+  learningMode: Schema.Literals(["manual", "suggest", "automatic"]),
+  guidance: Schema.String.check(Schema.isMaxLength(4000)),
+  tokenBudget: Schema.Int.check(Schema.isBetween({ minimum: 128, maximum: 8192 })),
+  extractorModel: Schema.String.check(Schema.isMaxLength(200)),
+  maxDailyTokens: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1000000 })),
+});
+export type MemorySettings = typeof MemorySettings.Type;
+export const DEFAULT_MEMORY_SETTINGS: MemorySettings = {
+  revision: 0,
+  recallEnabled: false,
+  learningMode: "manual",
+  guidance: "",
+  tokenBudget: 1500,
+  extractorModel: "",
+  maxDailyTokens: 0,
+};
+export const MemoryTurnContext = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  providerInstanceId: ProviderInstanceId,
+  cwd: Schema.String,
+  projectRoot: Schema.String,
+  readOnly: Schema.optionalKey(Schema.Boolean),
+});
+export type MemoryTurnContext = typeof MemoryTurnContext.Type;
+export const MemoryRecallReceipt = Schema.Struct({
+  // Receipts use composite orchestration run identifiers rather than memory entry IDs.
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  threadId: ThreadId,
+  createdAt: Schema.String,
+  status: Schema.Literals(["ready", "disabled", "unavailable"]),
+  contextKey: Schema.optionalKey(Schema.String),
+  sentEntryIds: Schema.optionalKey(Schema.Array(Id)),
+  reusedEntries: Schema.optionalKey(Schema.Int),
+  categories: Schema.Array(Schema.Struct({ id: Id, name: Name, reason: Schema.String })),
+  entries: Schema.Array(
+    Schema.Struct({ id: Id, scopeId: Id, title: Name, version: Schema.String }),
+  ),
+  estimatedTokens: Schema.Int,
+  truncated: Schema.Boolean,
+});
+export type MemoryRecallReceipt = typeof MemoryRecallReceipt.Type;
+export const MemorySuggestion = Schema.Struct({
+  id: Id,
+  entry: MemoryWrite,
+  createdAt: Schema.String,
+});
+export type MemorySuggestion = typeof MemorySuggestion.Type;
+export const MemoryThreadPolicy = Schema.Struct({
+  threadId: ThreadId,
+  recall: Schema.Boolean,
+  learn: Schema.Boolean,
+});
+export const MemoryThreadStatus = Schema.Struct({
+  receipt: Schema.NullOr(MemoryRecallReceipt),
+  policy: MemoryThreadPolicy,
+});
 export const MemoryState = Schema.Struct({
+  captureUsage: Schema.optionalKey(
+    Schema.Struct({
+      reservedTokens: Schema.Int,
+      jobs: Schema.Array(Schema.Struct({ status: Schema.String, count: Schema.Int })),
+    }),
+  ),
+  settings: Schema.optionalKey(MemorySettings),
+  receipts: Schema.optionalKey(Schema.Array(MemoryRecallReceipt)),
+  suggestions: Schema.optionalKey(Schema.Array(MemorySuggestion)),
+  threadPolicies: Schema.optionalKey(Schema.Array(MemoryThreadPolicy)),
   scopes: Schema.Array(MemoryScope),
   bindings: Schema.Array(MemoryRemoteBinding),
   profileScopes: Schema.Array(MemoryScopeReference),
@@ -103,6 +194,22 @@ export const MemoryGrantInput = Schema.Struct({
 });
 export const MemoryGrantResult = Schema.Struct({ token: Schema.NullOr(Schema.String) });
 export const MemoryCommand = Schema.Union([
+  Schema.Struct({
+    operation: Schema.Literal("settings-save"),
+    settings: MemorySettings,
+    expectedRevision: Schema.Int,
+  }),
+  Schema.Struct({
+    operation: Schema.Literal("suggestion-resolve"),
+    id: Id,
+    accept: Schema.Boolean,
+  }),
+  Schema.Struct({ operation: Schema.Literal("thread-policy-save"), policy: MemoryThreadPolicy }),
+  Schema.Struct({
+    operation: Schema.Literal("preview"),
+    context: MemoryTurnContext,
+    query: Schema.String.check(Schema.isMaxLength(1000)),
+  }),
   Schema.Struct({
     operation: Schema.Literal("scope-save"),
     scope: MemoryScope,

@@ -1,4 +1,6 @@
+import * as ProjectStore from "../../../orchestration-v2/ProjectStore.ts";
 import {
+  MemoryForget,
   MemoryQuery,
   MemoryQueryResult,
   MemoryWrite,
@@ -15,6 +17,7 @@ import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementSer
 const shared = {
   dependencies: [
     SharedMemory.SharedMemory,
+    ProjectStore.ProjectStoreV2,
     McpInvocationContext.McpInvocationContext,
     ThreadManagement.ThreadManagementService,
   ],
@@ -45,4 +48,11 @@ export const MemoryToolkit = Toolkit.make(
     parameters: MemoryWrite,
     success: MemoryEntry,
   }).annotate(Tool.Destructive, false),
+  Tool.make("t3_memory_forget", {
+    ...shared,
+    description:
+      "Forget a selected memory entry in an allowed scope. Requires scope write access; use when the user asks to remove a remembered fact.",
+    parameters: MemoryForget,
+    success: Schema.Void,
+  }),
 );

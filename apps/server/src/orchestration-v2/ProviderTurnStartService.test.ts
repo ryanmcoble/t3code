@@ -1,3 +1,5 @@
+import * as Context from "effect/Context";
+import * as MemoryTurnObserver from "../memory/MemoryTurnObserver.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
@@ -262,6 +264,8 @@ it.each([
 });
 
 function makeLocalCommandHarness(input: {
+  readonly invokeNative?: boolean;
+  readonly memoryObserver?: Context.Service.Shape<typeof MemoryTurnObserver.MemoryTurnObserver>;
   readonly text: string;
   readonly worktreePath?: string;
   readonly worktreesDir?: string;
@@ -577,6 +581,9 @@ function makeLocalCommandHarness(input: {
       ),
     ensureThread: () => Effect.succeed(providerThread),
   };
+  const nativeStart = vi.fn<ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"]>(
+    () => Effect.void,
+  );
   const open = vi.fn(() =>
     input.interruptOpen === true
       ? Effect.interrupt
@@ -598,8 +605,11 @@ function makeLocalCommandHarness(input: {
                   ),
                 ),
               )
-            : input.failReadsAfterRunning === true || input.previousTurn !== undefined
+            : input.failReadsAfterRunning === true ||
+                input.previousTurn !== undefined ||
+                input.invokeNative === true
               ? Effect.succeed({
+                  startTurn: nativeStart,
                   driver: providerThread.driver,
                   providerSession: {
                     id: providerSessionId,
@@ -620,12 +630,22 @@ function makeLocalCommandHarness(input: {
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
-  >(() =>
-    input.failReadsAfterRunning === true || input.previousTurn !== undefined
-      ? Effect.suspend(() =>
-          providerBusy ? Effect.die("The previous provider turn is still running.") : Effect.void,
-        )
-      : Effect.die("A local command must not start a native turn."),
+  >((request) =>
+    input.invokeNative === true
+      ? request.session
+          .startTurn({
+            ...request,
+            threadId: request.run.threadId,
+            runId: request.run.id,
+            runOrdinal: request.run.ordinal,
+            rootNodeId: request.rootNode.id,
+          })
+          .pipe(Effect.orDie)
+      : input.failReadsAfterRunning === true || input.previousTurn !== undefined
+        ? Effect.suspend(() =>
+            providerBusy ? Effect.die("The previous provider turn is still running.") : Effect.void,
+          )
+        : Effect.die("A local command must not start a native turn."),
   );
   const failReadIfRunning = Effect.suspend(() =>
     input.failReadsAfterRunning === true &&
@@ -693,6 +713,9 @@ function makeLocalCommandHarness(input: {
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        input.memoryObserver
+          ? Layer.succeed(MemoryTurnObserver.MemoryTurnObserver, input.memoryObserver)
+          : Layer.empty,
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: () => Effect.die("history read must fail first"),
         }),
@@ -757,6 +780,7 @@ function makeLocalCommandHarness(input: {
     ),
   );
   return {
+    nativeStart,
     getThreadRecords,
     getTurnStartContext,
     setProjection: (next: OrchestrationV2ThreadProjection) => {
@@ -1445,3 +1469,36 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect(
+  "recalls memory on an ordinary turn without a handoff before the native harness accepts the prompt",
+  () =>
+    Effect.gen(function* () {
+      const order: string[] = [];
+      const harness = makeLocalCommandHarness({
+        text: "Continue the work",
+        invokeNative: true,
+        memoryObserver: {
+          recall: (input) =>
+            Effect.sync(() => {
+              order.push("recall");
+              expect(input.context.projectRoot).toBe("/tmp/native-account-project");
+              expect(input.context.providerInstanceId).toBe(harness.newInstanceId);
+              return "MEMORY_FIXTURE: prefer inexpensive smoke tests";
+            }),
+          delivered: () =>
+            Effect.sync(() => {
+              expect(harness.nativeStart).toHaveBeenCalledOnce();
+              order.push("acknowledged");
+            }),
+          complete: () => Effect.void,
+        },
+      });
+      yield* harness.start;
+      expect(order).toEqual(["recall", "acknowledged"]);
+      expect(harness.nativeStart.mock.calls[0]?.[0].message.text).toContain("MEMORY_FIXTURE");
+      expect(harness.nativeStart.mock.calls[0]?.[0].message.text).toContain(
+        "User message:\nContinue the work",
+      );
+    }),
+);

@@ -219,6 +219,7 @@ export const make = Effect.gen(function* () {
     capabilities: {
       setupProfiles: 1,
       sharedMemory: 1,
+      memoryLifecycle: 1,
       computerUse: 1,
       repositoryIdentity: true,
       connectionProbe: true,

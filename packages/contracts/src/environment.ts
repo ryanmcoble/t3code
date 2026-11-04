@@ -71,6 +71,7 @@ export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
   sharedMemory: Schema.optionalKey(Schema.Literal(1)),
+  memoryLifecycle: Schema.optionalKey(Schema.Literal(1)),
   computerUse: Schema.optionalKey(Schema.Literal(1)),
   setupProfiles: Schema.optionalKey(Schema.Literal(1)),
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),

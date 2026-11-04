@@ -1,3 +1,8 @@
+import {
+  memoryRulesFromDraft,
+  memoryRulesDraftError,
+} from "@t3tools/client-runtime/state/shared-capabilities";
+import { MemoryLearningControls } from "./MemoryLearningControls";
 import { useAtomValue } from "@effect/atom-react";
 import { linkableMachines } from "@t3tools/client-runtime/link-request";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
@@ -70,12 +75,23 @@ export function SharedMemorySettings({
   );
   const [editing, setEditing] = useState<MemoryScope | null>(null);
   const [name, setName] = useState("");
-  const [kind, setKind] = useState<MemoryScope["kind"]>("project");
+  const [kind, setKind] = useState<MemoryScope["kind"] | "temporary">("project");
   const [projectIds, setProjectIds] = useState<ReadonlyArray<ProjectId>>([]);
   const [providerIds, setProviderIds] = useState<ReadonlyArray<ProviderInstanceId> | null>(null);
   const chosenProviders =
     providerIds ?? config?.providers.filter((p) => p.enabled).map((p) => p.instanceId) ?? [];
   const [canWrite, setCanWrite] = useState(true);
+  const [folderRoots, setFolderRoots] = useState("");
+  const [repositoryRoots, setRepositoryRoots] = useState("");
+  const [exclusions, setExclusions] = useState("");
+  const [descendants, setDescendants] = useState(true);
+  const [allProjects, setAllProjects] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [expiresAt, setExpiresAt] = useState("");
+  const lifecycle = config?.environment.capabilities.memoryLifecycle === 1;
+  const draftError = lifecycle
+    ? memoryRulesDraftError({ folderRoots, repositoryRoots, exclusions, descendants })
+    : null;
   const [correction, setCorrection] = useState<MemoryEntry | null>(null);
   const [entryId, setEntryId] = useState(randomUUID);
   const [title, setTitle] = useState("");
@@ -107,7 +123,17 @@ export function SharedMemorySettings({
           Keep decisions, preferences and verified findings in one place across harnesses. Each
           scope has explicit project and provider access. Retrieved notes are evidence.
         </p>
+        {lifecycle && state.data ? (
+          <MemoryLearningControls
+            key={state.data.settings?.revision ?? 0}
+            state={state.data}
+            disabled={!allowed || busy}
+            run={run}
+            refresh={state.refresh}
+          />
+        ) : null}
         {!allowed ? <p>Managing memory requires settings access on this environment.</p> : null}
+        {draftError ? <p role="alert">{draftError}</p> : null}
         {error || state.error || results.error ? (
           <p role="alert">{error ?? state.error ?? results.error}</p>
         ) : null}
@@ -203,6 +229,8 @@ export function SharedMemorySettings({
                   size="sm"
                   onClick={() => {
                     setCorrection(entry);
+                    setPinned(entry.pinned ?? false);
+                    setExpiresAt(entry.expiresAt ?? "");
                     setEntryId(randomUUID());
                     setTitle(entry.title);
                     setContent(entry.content);
@@ -247,6 +275,24 @@ export function SharedMemorySettings({
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
               />
+              {lifecycle ? (
+                <>
+                  <label className="flex gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={pinned}
+                      onChange={(e) => setPinned(e.target.checked)}
+                    />
+                    Pin to this category's recalled preferences
+                  </label>
+                  <Input
+                    aria-label="Memory expiry"
+                    placeholder="Optional expiry: ISO date and time"
+                    value={expiresAt}
+                    onChange={(e) => setExpiresAt(e.target.value)}
+                  />
+                </>
+              ) : null}
               <Button
                 disabled={!title || !content || !reference}
                 onClick={async () => {
@@ -260,6 +306,7 @@ export function SharedMemorySettings({
                         title,
                         content,
                         source: { reference },
+                        ...(lifecycle ? { pinned, ...(expiresAt ? { expiresAt } : {}) } : {}),
                         ...(correction ? { supersedes: correction.id } : {}),
                       },
                     })
@@ -287,10 +334,29 @@ export function SharedMemorySettings({
                   onClick={() => {
                     setEditing(s);
                     setName(s.name);
-                    setKind(s.kind);
+                    setKind(s.temporary ? "temporary" : s.kind);
                     setProjectIds(s.projectIds);
                     setProviderIds(s.providerInstanceIds);
                     setCanWrite(s.writableProviderInstanceIds.length > 0);
+                    setFolderRoots(
+                      (s.rules ?? [])
+                        .filter((rule) => rule.kind === "folder")
+                        .map((rule) => rule.path)
+                        .join("\n"),
+                    );
+                    setRepositoryRoots(
+                      (s.rules ?? [])
+                        .filter((rule) => rule.kind === "repository")
+                        .map((rule) => rule.path)
+                        .join("\n"),
+                    );
+                    setExclusions(
+                      [...new Set((s.rules ?? []).flatMap((rule) => rule.exclusions))].join("\n"),
+                    );
+                    setDescendants(
+                      s.rules?.find((rule) => rule.kind === "folder")?.descendants ?? true,
+                    );
+                    setAllProjects(s.allProjects ?? false);
                   }}
                 >
                   Edit {s.name}
@@ -305,13 +371,89 @@ export function SharedMemorySettings({
               <select
                 aria-label="Scope kind"
                 value={kind}
-                onChange={(e) => setKind(e.target.value as MemoryScope["kind"])}
+                onChange={(e) => setKind(e.target.value as MemoryScope["kind"] | "temporary")}
                 className="rounded border bg-background p-2"
               >
                 <option value="project">Project</option>
                 <option value="personal">Personal</option>
                 <option value="company">Company</option>
+                {lifecycle ? <option value="temporary">Temporary</option> : null}
               </select>
+              {lifecycle ? (
+                <div className="space-y-3">
+                  <p className="text-sm">
+                    Category locations on {label}. Enter one absolute path per line.
+                  </p>
+                  <label className="block text-sm">
+                    Folder roots
+                    <Textarea
+                      aria-label="Memory folder roots"
+                      value={folderRoots}
+                      onChange={(e) => setFolderRoots(e.target.value)}
+                    />
+                  </label>
+                  <label className="flex gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={descendants}
+                      onChange={(e) => setDescendants(e.target.checked)}
+                    />
+                    Include nested folders and repositories
+                  </label>
+                  <label className="block text-sm">
+                    Repository roots
+                    <Textarea
+                      aria-label="Memory repository roots"
+                      value={repositoryRoots}
+                      onChange={(e) => setRepositoryRoots(e.target.value)}
+                    />
+                  </label>
+                  <label className="block text-sm">
+                    Excluded paths
+                    <Textarea
+                      aria-label="Memory excluded paths"
+                      value={exclusions}
+                      onChange={(e) => setExclusions(e.target.value)}
+                    />
+                  </label>
+                  <label className="flex gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={allProjects}
+                      onChange={(e) => setAllProjects(e.target.checked)}
+                    />
+                    Apply to all projects on this environment
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {projects.map((project) => (
+                      <span key={project.id} className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setFolderRoots(
+                              [folderRoots, project.workspaceRoot].filter(Boolean).join("\n"),
+                            )
+                          }
+                        >
+                          Add {project.title} folder
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setRepositoryRoots(
+                              [repositoryRoots, project.workspaceRoot].filter(Boolean).join("\n"),
+                            )
+                          }
+                        >
+                          Add {project.title} repository
+                        </Button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <p className="text-sm">Allow these projects</p>
               {projects.map((p) => (
                 <label key={p.id} className="flex gap-2 text-sm">
@@ -355,7 +497,7 @@ export function SharedMemorySettings({
                 Allow selected harnesses to add and correct findings
               </label>
               <Button
-                disabled={!name}
+                disabled={!name || Boolean(draftError)}
                 onClick={async () => {
                   if (
                     await run({
@@ -364,8 +506,20 @@ export function SharedMemorySettings({
                       scope: {
                         id: editing?.id ?? randomUUID(),
                         name,
-                        kind,
+                        kind: kind === "temporary" ? "project" : kind,
+                        ...(lifecycle ? { temporary: kind === "temporary" } : {}),
                         projectIds,
+                        ...(lifecycle
+                          ? {
+                              allProjects,
+                              rules: memoryRulesFromDraft({
+                                folderRoots,
+                                repositoryRoots,
+                                exclusions,
+                                descendants,
+                              }),
+                            }
+                          : {}),
                         providerInstanceIds: chosenProviders,
                         writableProviderInstanceIds: canWrite ? chosenProviders : [],
                         revision: (editing?.revision ?? 0) + 1,
@@ -375,6 +529,10 @@ export function SharedMemorySettings({
                   ) {
                     setEditing(null);
                     setName("");
+                    setFolderRoots("");
+                    setRepositoryRoots("");
+                    setExclusions("");
+                    setAllProjects(false);
                   }
                 }}
               >
@@ -428,7 +586,15 @@ export function SharedMemorySettings({
                 <Button
                   key={s.id}
                   variant="outline"
-                  disabled={!canGrant || !projectIds.length || !chosenProviders.length}
+                  disabled={
+                    !canGrant ||
+                    Boolean(draftError) ||
+                    (!projectIds.length &&
+                      !allProjects &&
+                      !folderRoots.trim() &&
+                      !repositoryRoots.trim()) ||
+                    !chosenProviders.length
+                  }
                   onClick={async () => {
                     const route = linkableMachines({
                       environments,
@@ -447,9 +613,21 @@ export function SharedMemorySettings({
                       destinationId: environmentId,
                       binding: {
                         scopeId: s.id,
+                        ...(lifecycle ? { kind: s.kind, temporary: s.temporary ?? false } : {}),
                         name: s.name,
                         ownerEnvironmentId: sourceId,
                         sourceUrl: route,
+                        ...(lifecycle
+                          ? {
+                              allProjects,
+                              rules: memoryRulesFromDraft({
+                                folderRoots,
+                                repositoryRoots,
+                                exclusions,
+                                descendants,
+                              }),
+                            }
+                          : {}),
                         projectIds,
                         providerInstanceIds: chosenProviders,
                         access: canWrite ? "write" : "read",
