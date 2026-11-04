@@ -40,7 +40,6 @@ import {
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
-import * as PortScanner from "../../preview/PortScanner.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   COMPUTER_USE_TOOL_SOURCE,
@@ -1497,10 +1496,6 @@ export const layerAppServerClientFactory: Layer.Layer<
         const environment = {
           ...codexAppServerEnvironment(input.environment),
           ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
-          // Each thread gets its own app-server, so hooks and MCP servers it
-          // starts can attribute work to the T3 thread.
-          [PortScanner.AGENT_THREAD_ENV]: String(input.threadId),
-          [PortScanner.AGENT_PROVIDER_ENV]: "codex",
         };
         const command = yield* makeCodexAppServerSpawnCommand({
           command: input.settings.binaryPath || "codex",
