@@ -39,11 +39,15 @@ function globalShortcutFixture(
   const original = window.desktopBridge;
   let listener: ((event: DesktopVoiceShortcutEvent) => void) | undefined;
   let ownerKey = "";
+  let activeId: string | null = null;
   let configured!: () => void;
   const ready = new Promise<void>((resolve) => {
     configured = resolve;
   });
-  const finishRecording = vi.fn(async () => encodeVoiceWav([new Float32Array(1600)], 16000));
+  const finishRecording = vi.fn(async () => {
+    activeId = null;
+    return encodeVoiceWav([new Float32Array(1600)], 16000);
+  });
   window.desktopBridge = {
     getClientPlatform: () => "darwin",
     getSystemLocale: () => "en-US",
@@ -68,7 +72,17 @@ function globalShortcutFixture(
         models: [],
       }),
       cancel: async () => {},
-      prepareRecording: prepare,
+      prepareRecording: async (id: string) => {
+        activeId = id;
+        await prepare();
+      },
+      // Stream input levels like the native helper does while recording.
+      onRecordingLevel: (next: (event: { id: string; level: number }) => void) => {
+        const interval = setInterval(() => {
+          if (activeId) next({ id: activeId, level: 0.5 });
+        }, 20);
+        return () => clearInterval(interval);
+      },
       finishRecording,
       cancelRecording: async () => {
         cancel();
@@ -503,4 +517,35 @@ it("cancels push-to-talk released before native microphone preparation finishes"
   expect(bridge.finishRecording).not.toHaveBeenCalled();
   await expect.element(screen.getByRole("status", { name: "Send count" })).toHaveTextContent("0");
   await expect.element(screen.getByRole("button", { name: "Start dictation" })).toBeVisible();
+});
+
+it("Enter while recording with the native engine transcribes and sends", async () => {
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    voiceInput: {
+      ...DEFAULT_CLIENT_SETTINGS.voiceInput,
+      engine: "native",
+      sendOnEnter: true,
+      shortcutMode: "hold",
+    },
+  });
+  using bridge = globalShortcutFixture();
+  await using screen = await render(<ComposerHarness realEditor />);
+  await bridge.ready;
+  await screen.getByRole("textbox", { name: "Message" }).click();
+  await screen.getByRole("button", { name: "Start dictation" }).click();
+  await expect.element(screen.getByRole("button", { name: "Finish dictation" })).toBeVisible();
+  // The meter grows once streamed levels reach the composer.
+  await vi.waitFor(() => {
+    const bars = document.querySelectorAll<HTMLElement>(
+      '[data-testid="composer-voice-level-meter"] > span',
+    );
+    expect([...bars].some((bar) => Number.parseInt(bar.style.height, 10) > 3)).toBe(true);
+  });
+  await userEvent.keyboard("{Enter}");
+  await expect
+    .element(screen.getByRole("status", { name: "Sent message" }))
+    .toHaveTextContent("before spoken text after");
+  await expect.element(screen.getByRole("status", { name: "Send count" })).toHaveTextContent("1");
+  expect(bridge.finishRecording).toHaveBeenCalledTimes(1);
 });
