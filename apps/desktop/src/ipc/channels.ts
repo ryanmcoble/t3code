@@ -46,6 +46,7 @@ export const VOICE_INPUT_SHORTCUT_EVENT_CHANNEL = "desktop:voice-input-shortcut-
 export const VOICE_INPUT_RECORD_PREPARE_CHANNEL = "desktop:voice-input-record-prepare";
 export const VOICE_INPUT_RECORD_FINISH_CHANNEL = "desktop:voice-input-record-finish";
 export const VOICE_INPUT_RECORD_CANCEL_CHANNEL = "desktop:voice-input-record-cancel";
+export const VOICE_INPUT_RECORD_LEVEL_CHANNEL = "desktop:voice-input-record-level";
 export const SET_CLIENT_SETTINGS_CHANNEL = "desktop:set-client-settings";
 export const SETUP_SNAP_SHOT_CHANNEL = "desktop:setup-snap-shot";
 export const PREVIEW_SNAP_SHOT_CONFIG_CHANNEL = "desktop:preview-snap-shot-config";

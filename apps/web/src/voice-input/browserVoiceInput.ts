@@ -7,6 +7,7 @@ import {
   type VoiceTranscriber,
 } from "@t3tools/client-runtime/voice-input";
 import { DesktopVoiceRecorder } from "./desktopVoiceRecorder";
+import { levelFromRms, pushVoiceLevel, resetVoiceLevels } from "./voiceLevels";
 
 class BrowserVoiceRecorder implements VoiceRecorder {
   uri: string | null = null;
@@ -14,8 +15,38 @@ class BrowserVoiceRecorder implements VoiceRecorder {
   private recorder: MediaRecorder | null = null;
   private stopped: Promise<void> | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private meter: { context: AudioContext; interval: ReturnType<typeof setInterval> } | null = null;
 
   constructor(private readonly onFinished: (uri: string | null, error: string | null) => void) {}
+
+  /** Samples input loudness about 20 times a second for the composer waveform. */
+  private startMeter(stream: MediaStream) {
+    this.stopMeter();
+    try {
+      const context = new AudioContext();
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      context.createMediaStreamSource(stream).connect(analyser);
+      const samples = new Float32Array(analyser.fftSize);
+      const interval = setInterval(() => {
+        analyser.getFloatTimeDomainData(samples);
+        let sum = 0;
+        for (const sample of samples) sum += sample * sample;
+        pushVoiceLevel(levelFromRms(Math.sqrt(sum / samples.length)));
+      }, 50);
+      this.meter = { context, interval };
+    } catch {
+      // Levels are cosmetic; recording works without them.
+    }
+  }
+
+  private stopMeter() {
+    if (!this.meter) return;
+    clearInterval(this.meter.interval);
+    void this.meter.context.close().catch(() => {});
+    this.meter = null;
+    resetVoiceLevels();
+  }
 
   async prepareToRecordAsync() {
     this.uri = null;
@@ -82,6 +113,7 @@ class BrowserVoiceRecorder implements VoiceRecorder {
     });
     void this.stopped.catch(() => {});
     recorder.start();
+    if (this.stream) this.startMeter(this.stream);
     this.timer = setTimeout(() => {
       void this.stop().then(
         () => this.onFinished(this.uri, null),
@@ -92,6 +124,7 @@ class BrowserVoiceRecorder implements VoiceRecorder {
 
   async stop() {
     clearTimeout(this.timer);
+    this.stopMeter();
     if (this.recorder?.state === "recording" || this.recorder?.state === "paused")
       this.recorder.stop();
     await this.stopped;
@@ -99,6 +132,7 @@ class BrowserVoiceRecorder implements VoiceRecorder {
 
   release() {
     clearTimeout(this.timer);
+    this.stopMeter();
     for (const track of this.stream?.getTracks() ?? []) track.stop();
     this.stream = null;
     this.recorder = null;

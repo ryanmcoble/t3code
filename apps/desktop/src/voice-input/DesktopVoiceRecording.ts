@@ -19,6 +19,7 @@ const decode = Schema.decodeEffect(
     Schema.Struct({
       event: Schema.optionalKey(Schema.String),
       error: Schema.optionalKey(Schema.String),
+      level: Schema.optionalKey(Schema.Number),
     }),
   ),
 );
@@ -27,7 +28,11 @@ const isVoiceError = Schema.is(DesktopVoiceInputError);
 export class DesktopVoiceRecording extends Context.Service<
   DesktopVoiceRecording,
   {
-    readonly prepare: (id: string) => Effect.Effect<void, DesktopVoiceInputError>;
+    /** `onLevel` receives input loudness (0...1) while recording. */
+    readonly prepare: (
+      id: string,
+      onLevel?: (level: number) => void,
+    ) => Effect.Effect<void, DesktopVoiceInputError>;
     readonly finish: (id: string) => Effect.Effect<Uint8Array, DesktopVoiceInputError>;
     readonly cancel: (id: string) => Effect.Effect<void>;
   }
@@ -48,7 +53,7 @@ export const make = Effect.gen(function* () {
   >();
 
   return DesktopVoiceRecording.of({
-    prepare: Effect.fn("desktop.voiceInput.prepareRecording")(function* (id) {
+    prepare: Effect.fn("desktop.voiceInput.prepareRecording")(function* (id, onLevel) {
       if (recordings.size > 0)
         return yield* new DesktopVoiceInputError({ message: "Voice recording is already active." });
       const ready = yield* Deferred.make<void, DesktopVoiceInputError>();
@@ -98,6 +103,8 @@ export const make = Effect.gen(function* () {
                 const event = yield* decode(line);
                 if (event.error) return yield* new DesktopVoiceInputError({ message: event.error });
                 if (event.event === "ready") yield* Deferred.succeed(ready, undefined);
+                if (event.event === "level" && event.level !== undefined && onLevel)
+                  onLevel(Math.max(0, Math.min(1, event.level)));
                 if (event.event === "finished") finished = true;
               }),
             ),

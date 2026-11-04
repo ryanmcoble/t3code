@@ -13,15 +13,33 @@ enum NativeVoiceRecording {
             AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
             AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false,
         ])
+        recorder.isMeteringEnabled = true
         guard recorder.record(forDuration: duration) else {
             throw TranscriptionFailure(message: "Could not start the microphone.")
         }
         try AppleTranscription.emit(["event": "ready"])
+        // Report input loudness (0...1) about 20 times a second so the app can
+        // show that audio is actually being captured.
+        let meter = Task { @MainActor in
+            while !Task.isCancelled && recorder.isRecording {
+                recorder.updateMeters()
+                try? AppleTranscription.emit(["event": "level", "level": normalizedLevel(recorder.averagePower(forChannel: 0))])
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
         let command = await Task.detached {
             String(data: FileHandle.standardInput.availableData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
         }.value
+        meter.cancel()
         recorder.stop()
         guard command == "stop" else { throw TranscriptionFailure(message: "Recording cancelled.") }
         try AppleTranscription.emit(["event": "finished"])
+    }
+
+    /// Maps average power (-160...0 dBFS) to 0...1, treating -50 dBFS as silence.
+    static func normalizedLevel(_ decibels: Float) -> Double {
+        guard decibels.isFinite else { return 0 }
+        let floor: Float = -50
+        return Double(max(0, min(1, (decibels - floor) / -floor)))
     }
 }

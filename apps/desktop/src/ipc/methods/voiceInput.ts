@@ -20,6 +20,7 @@ const ensureVoiceSender = Effect.fn("desktop.ipc.voiceInput.ensureSender")(funct
   const main = yield* (yield* ElectronWindow.ElectronWindow).main;
   if (Option.isNone(main) || main.value.webContents.id !== event?.sender.id)
     return yield* new DesktopVoiceInputError({ message: "Voice recording request was rejected." });
+  return main.value;
 });
 
 export const prepareVoiceRecording = DesktopIpc.makeIpcMethod({
@@ -27,8 +28,11 @@ export const prepareVoiceRecording = DesktopIpc.makeIpcMethod({
   payload: Schema.String,
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.voiceInput.prepareRecording")(function* (id, event) {
-    yield* ensureVoiceSender(event);
-    yield* (yield* DesktopVoiceRecording.DesktopVoiceRecording).prepare(id);
+    const window = yield* ensureVoiceSender(event);
+    yield* (yield* DesktopVoiceRecording.DesktopVoiceRecording).prepare(id, (level) => {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed())
+        window.webContents.send(IpcChannels.VOICE_INPUT_RECORD_LEVEL_CHANNEL, { id, level });
+    });
   }),
 });
 export const finishVoiceRecording = DesktopIpc.makeIpcMethod({
