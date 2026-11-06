@@ -37,6 +37,7 @@ export function useVoiceInput(input: {
   const shortcutPressed = useRef(false);
   const heldRecording = useRef(false);
   const getTranscriber = useStableCallback(() => createVoiceTranscriber(settings));
+  const getDuckOtherAudio = useStableCallback(() => settings.duckOtherAudio);
   const readDraft = useStableCallback(input.readDraft);
   const commitDraft = useStableCallback(input.commitDraft);
   const subscribeDraftChanges = useStableCallback(input.subscribeDraftChanges);
@@ -46,7 +47,7 @@ export function useVoiceInput(input: {
     if (current?.ownerKey === ownerKey && current.text === text) input.submitDraft();
   });
   const [session] = useState(() =>
-    createBrowserVoiceInput({ getTranscriber, readDraft, commitDraft }),
+    createBrowserVoiceInput({ getTranscriber, getDuckOtherAudio, readDraft, commitDraft }),
   );
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot);
   const available =

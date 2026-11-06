@@ -40,6 +40,7 @@ function globalShortcutFixture(
   let listener: ((event: DesktopVoiceShortcutEvent) => void) | undefined;
   let ownerKey = "";
   let activeId: string | null = null;
+  const recordingOptions: Array<{ duckOtherAudio?: boolean } | undefined> = [];
   let configured!: () => void;
   const ready = new Promise<void>((resolve) => {
     configured = resolve;
@@ -72,8 +73,9 @@ function globalShortcutFixture(
         models: [],
       }),
       cancel: async () => {},
-      prepareRecording: async (id: string) => {
+      prepareRecording: async (id: string, options?: { duckOtherAudio?: boolean }) => {
         activeId = id;
+        recordingOptions.push(options);
         await prepare();
       },
       // Stream input levels like the native helper does while recording.
@@ -92,6 +94,7 @@ function globalShortcutFixture(
   return {
     ready,
     finishRecording,
+    recordingOptions,
     press: () => listener?.({ ownerKey, type: "pressed" }),
     release: () => listener?.({ ownerKey, type: "released" }),
     [Symbol.dispose]: () => {
@@ -548,4 +551,25 @@ it("Enter while recording with the native engine transcribes and sends", async (
     .toHaveTextContent("before spoken text after");
   await expect.element(screen.getByRole("status", { name: "Send count" })).toHaveTextContent("1");
   expect(bridge.finishRecording).toHaveBeenCalledTimes(1);
+  // Lowering other audio is on by default.
+  expect(bridge.recordingOptions).toEqual([{ duckOtherAudio: true }]);
+});
+
+it("does not lower other audio when the setting is off", async () => {
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    voiceInput: {
+      ...DEFAULT_CLIENT_SETTINGS.voiceInput,
+      engine: "native",
+      duckOtherAudio: false,
+    },
+  });
+  using bridge = globalShortcutFixture();
+  await using screen = await render(<ComposerHarness realEditor />);
+  await bridge.ready;
+  await screen.getByRole("button", { name: "Start dictation" }).click();
+  await expect.element(screen.getByRole("button", { name: "Finish dictation" })).toBeVisible();
+  await screen.getByRole("button", { name: "Finish dictation" }).click();
+  await vi.waitFor(() => expect(bridge.finishRecording).toHaveBeenCalledTimes(1));
+  expect(bridge.recordingOptions).toEqual([undefined]);
 });

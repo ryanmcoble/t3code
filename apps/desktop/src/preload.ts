@@ -78,8 +78,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   voiceInput: {
     run: (request) => ipcRenderer.invoke(IpcChannels.VOICE_INPUT_RUN_CHANNEL, request),
     cancel: (id) => ipcRenderer.invoke(IpcChannels.VOICE_INPUT_CANCEL_CHANNEL, id),
-    prepareRecording: (id) =>
-      ipcRenderer.invoke(IpcChannels.VOICE_INPUT_RECORD_PREPARE_CHANNEL, id),
+    prepareRecording: (id, options) =>
+      ipcRenderer.invoke(
+        IpcChannels.VOICE_INPUT_RECORD_PREPARE_CHANNEL,
+        options ? { id, ...options } : id,
+      ),
     finishRecording: (id) => ipcRenderer.invoke(IpcChannels.VOICE_INPUT_RECORD_FINISH_CHANNEL, id),
     cancelRecording: (id) => ipcRenderer.invoke(IpcChannels.VOICE_INPUT_RECORD_CANCEL_CHANNEL, id),
     onRecordingLevel: (listener) => {

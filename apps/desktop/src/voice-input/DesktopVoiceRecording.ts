@@ -13,6 +13,10 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { DesktopVoiceInputError } from "./DesktopVoiceInput.ts";
 import { nativeTranscriptionCandidates } from "./nativeTranscription.ts";
 import { VOICE_RECORDING_LIMIT_SECONDS } from "@t3tools/client-runtime/voice-input";
+import {
+  VOICE_DUCKED_OUTPUT_FRACTION,
+  type DesktopVoiceRecordingOptions,
+} from "@t3tools/contracts";
 
 const decode = Schema.decodeEffect(
   Schema.fromJsonString(
@@ -28,10 +32,14 @@ const isVoiceError = Schema.is(DesktopVoiceInputError);
 export class DesktopVoiceRecording extends Context.Service<
   DesktopVoiceRecording,
   {
-    /** `onLevel` receives input loudness (0...1) while recording. */
+    /**
+     * `onLevel` receives input loudness (0...1) while recording. With
+     * `duckOtherAudio`, the helper lowers output volume until recording ends.
+     */
     readonly prepare: (
       id: string,
       onLevel?: (level: number) => void,
+      options?: DesktopVoiceRecordingOptions,
     ) => Effect.Effect<void, DesktopVoiceInputError>;
     readonly finish: (id: string) => Effect.Effect<Uint8Array, DesktopVoiceInputError>;
     readonly cancel: (id: string) => Effect.Effect<void>;
@@ -53,7 +61,7 @@ export const make = Effect.gen(function* () {
   >();
 
   return DesktopVoiceRecording.of({
-    prepare: Effect.fn("desktop.voiceInput.prepareRecording")(function* (id, onLevel) {
+    prepare: Effect.fn("desktop.voiceInput.prepareRecording")(function* (id, onLevel, options) {
       if (recordings.size > 0)
         return yield* new DesktopVoiceInputError({ message: "Voice recording is already active." });
       const ready = yield* Deferred.make<void, DesktopVoiceInputError>();
@@ -78,13 +86,22 @@ export const make = Effect.gen(function* () {
           const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-voice-recording-" });
           const file = environment.path.join(directory, "recording.wav");
           const child = yield* spawner.spawn(
-            ChildProcess.make(executable, ["record", file, String(VOICE_RECORDING_LIMIT_SECONDS)], {
-              stdin: "pipe",
-              stdout: "pipe",
-              stderr: "pipe",
-              killSignal: "SIGTERM",
-              forceKillAfter: "2 seconds",
-            }),
+            ChildProcess.make(
+              executable,
+              [
+                "record",
+                file,
+                String(VOICE_RECORDING_LIMIT_SECONDS),
+                ...(options?.duckOtherAudio ? [String(VOICE_DUCKED_OUTPUT_FRACTION)] : []),
+              ],
+              {
+                stdin: "pipe",
+                stdout: "pipe",
+                stderr: "pipe",
+                killSignal: "SIGTERM",
+                forceKillAfter: "2 seconds",
+              },
+            ),
           );
           yield* child.stderr.pipe(Stream.runDrain, Effect.forkChild);
           yield* Deferred.await(stop).pipe(

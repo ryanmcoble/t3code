@@ -18,8 +18,8 @@ if (hostPlatform === "darwin") {
   const root = NodeURL.fileURLToPath(
     new URL("../../../native/apple-transcription/", import.meta.url),
   );
-  const sources = ["main.swift", "GlobalHotkey.swift", "Recording.swift"].map((file) =>
-    NodePath.join(root, file),
+  const sources = ["main.swift", "GlobalHotkey.swift", "Recording.swift", "OutputDucker.swift"].map(
+    (file) => NodePath.join(root, file),
   );
   const output = values.output ?? NodePath.join(root, "build", values.arch, "t3-transcription");
   const architectures =

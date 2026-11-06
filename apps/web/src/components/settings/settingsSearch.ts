@@ -599,6 +599,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["voice transcription microphone speech enter return send dictation automatic"],
   },
   {
+    id: "voice-input-duck-other-audio",
+    title: "Lower other audio while dictating",
+    to: "/settings/chat",
+    searchTerms: ["voice dictation microphone volume duck music video speakers headphones quiet"],
+  },
+  {
     id: "voice-input-global-shortcut",
     title: "System-wide dictation shortcut",
     to: "/settings/chat",

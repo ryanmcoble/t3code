@@ -119,6 +119,19 @@ export function VoiceInputSettings() {
               />
             }
           />
+          {native ? (
+            <SettingsRow
+              {...searchableSetting("voice-input-duck-other-audio")}
+              description="Lower your speaker or headphone volume to 20% while recording, so music or videos don't compete with your voice. The volume comes back when recording ends, unless you changed it meanwhile."
+              control={
+                <Switch
+                  checked={settings.duckOtherAudio}
+                  onCheckedChange={(checked) => update({ duckOtherAudio: checked })}
+                  aria-label="Lower other audio while dictating"
+                />
+              }
+            />
+          ) : null}
           <SettingsRow
             title="Language"
             description="Leave blank to use the device language for Apple transcription, or automatic language detection on a custom server."

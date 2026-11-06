@@ -305,7 +305,12 @@ describe("ClientSettings voice input", () => {
     expect(decodeClientSettings({ voiceInput: legacyVoice }).voiceInput).toMatchObject({
       globalShortcut: true,
       shortcutMode: "hold",
+      duckOtherAudio: true,
     });
+    expect(
+      decodeClientSettings({ voiceInput: { ...legacyVoice, duckOtherAudio: false } }).voiceInput
+        .duckOtherAudio,
+    ).toBe(false);
     expect(
       decodeClientSettings({
         voiceInput: { ...legacyVoice, globalShortcut: false, shortcutMode: "toggle" },

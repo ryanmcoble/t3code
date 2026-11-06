@@ -13,6 +13,8 @@ export const VoiceInputSettings = Schema.Struct({
   shortcutMode: Schema.Literals(["toggle", "hold"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("hold" as const)),
   ),
+  /** Lower the Mac's speaker/headphone volume while recording, then restore it. */
+  duckOtherAudio: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type VoiceInputSettings = typeof VoiceInputSettings.Type;
 
@@ -25,7 +27,16 @@ export const DEFAULT_VOICE_INPUT_SETTINGS: VoiceInputSettings = {
   sendOnEnter: true,
   globalShortcut: true,
   shortcutMode: "hold",
+  duckOtherAudio: true,
 };
+
+/** Fraction of the current output volume kept while dictating with `duckOtherAudio`. */
+export const VOICE_DUCKED_OUTPUT_FRACTION = 0.2;
+
+export const DesktopVoiceRecordingOptions = Schema.Struct({
+  duckOtherAudio: Schema.optionalKey(Schema.Boolean),
+});
+export type DesktopVoiceRecordingOptions = typeof DesktopVoiceRecordingOptions.Type;
 
 export const DesktopVoiceShortcutConfig = Schema.Struct({
   ownerKey: Schema.String,
