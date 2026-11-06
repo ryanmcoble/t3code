@@ -1,4 +1,5 @@
 import {
+  DesktopVoiceRecordingOptions,
   DesktopVoiceInputRequest,
   DesktopVoiceInputResult,
   DesktopVoiceShortcutConfig,
@@ -25,14 +26,23 @@ const ensureVoiceSender = Effect.fn("desktop.ipc.voiceInput.ensureSender")(funct
 
 export const prepareVoiceRecording = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.VOICE_INPUT_RECORD_PREPARE_CHANNEL,
-  payload: Schema.String,
+  // A bare id (older renderers) or the id with recording options.
+  payload: Schema.Union([
+    Schema.String,
+    Schema.Struct({ id: Schema.String, ...DesktopVoiceRecordingOptions.fields }),
+  ]),
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.voiceInput.prepareRecording")(function* (id, event) {
+  handler: Effect.fn("desktop.ipc.voiceInput.prepareRecording")(function* (payload, event) {
     const window = yield* ensureVoiceSender(event);
-    yield* (yield* DesktopVoiceRecording.DesktopVoiceRecording).prepare(id, (level) => {
-      if (!window.isDestroyed() && !window.webContents.isDestroyed())
-        window.webContents.send(IpcChannels.VOICE_INPUT_RECORD_LEVEL_CHANNEL, { id, level });
-    });
+    const { id, ...options } = typeof payload === "string" ? { id: payload } : payload;
+    yield* (yield* DesktopVoiceRecording.DesktopVoiceRecording).prepare(
+      id,
+      (level) => {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed())
+          window.webContents.send(IpcChannels.VOICE_INPUT_RECORD_LEVEL_CHANNEL, { id, level });
+      },
+      options,
+    );
   }),
 });
 export const finishVoiceRecording = DesktopIpc.makeIpcMethod({

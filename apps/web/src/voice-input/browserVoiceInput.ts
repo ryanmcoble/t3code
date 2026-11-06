@@ -142,6 +142,8 @@ class BrowserVoiceRecorder implements VoiceRecorder {
 
 export function createBrowserVoiceInput(input: {
   readonly getTranscriber: () => VoiceTranscriber | null;
+  /** Native Mac recording: lower other audio while recording. */
+  readonly getDuckOtherAudio?: () => boolean;
   readonly readDraft: () => VoiceDraftSnapshot | null;
   readonly commitDraft: (
     text: string,
@@ -167,7 +169,9 @@ export function createBrowserVoiceInput(input: {
     typeof bridge.voiceInput?.finishRecording === "function" &&
     typeof bridge.voiceInput?.cancelRecording === "function";
   const recorder = native
-    ? new DesktopVoiceRecorder(bridge.voiceInput, onFinished)
+    ? new DesktopVoiceRecorder(bridge.voiceInput, onFinished, () => ({
+        duckOtherAudio: input.getDuckOtherAudio?.() ?? false,
+      }))
     : new BrowserVoiceRecorder(onFinished);
   const controller = new VoiceInputController({
     ...input,

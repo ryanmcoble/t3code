@@ -13,6 +13,7 @@ export class DesktopVoiceRecorder implements VoiceRecorder {
   constructor(
     private readonly bridge: DesktopBridge["voiceInput"],
     private readonly onFinished: (uri: string | null, error: string | null) => void,
+    private readonly getOptions: () => { readonly duckOtherAudio?: boolean } = () => ({}),
   ) {}
 
   async prepareToRecordAsync(options?: { readonly signal?: AbortSignal }) {
@@ -26,7 +27,10 @@ export class DesktopVoiceRecorder implements VoiceRecorder {
     options?.signal?.addEventListener("abort", cancel, { once: true });
     this.detachAbort = () => options?.signal?.removeEventListener("abort", cancel);
     try {
-      await this.bridge.prepareRecording(id);
+      const recording = this.getOptions();
+      await (recording.duckOtherAudio
+        ? this.bridge.prepareRecording(id, { duckOtherAudio: true })
+        : this.bridge.prepareRecording(id));
       options?.signal?.throwIfAborted();
     } catch (cause) {
       throw new VoiceTranscriptionError(

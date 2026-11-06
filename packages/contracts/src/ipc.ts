@@ -17,6 +17,7 @@ import type { EditorId } from "./editor.ts";
 import type { PreviewForwardedShortcut } from "./keybindings.ts";
 import type {
   DesktopVoiceInputRequest,
+  DesktopVoiceRecordingOptions,
   DesktopVoiceInputResult,
   DesktopVoiceShortcutConfig,
   DesktopVoiceShortcutEvent,
@@ -1023,7 +1024,7 @@ export interface DesktopBridge {
     run: (request: DesktopVoiceInputRequest) => Promise<DesktopVoiceInputResult>;
     cancel: (id: string) => Promise<void>;
     configureShortcut: (config: DesktopVoiceShortcutConfig) => Promise<void>;
-    prepareRecording: (id: string) => Promise<void>;
+    prepareRecording: (id: string, options?: DesktopVoiceRecordingOptions) => Promise<void>;
     finishRecording: (id: string) => Promise<Uint8Array>;
     cancelRecording: (id: string) => Promise<void>;
     /** Input loudness (0...1) for an active native recording, about 20 times a second. */
