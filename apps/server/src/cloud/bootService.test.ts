@@ -503,7 +503,11 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
           protocol: SERVICE_LAUNCHER_PROTOCOL,
           activeVersion: "1.2.4",
         });
-        expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/t3");
+        const expectedLauncher =
+          platform === "darwin"
+            ? `service-launcher/${SERVICE_LAUNCHER_PROTOCOL}/t3`
+            : "versions/1.2.4/t3";
+        expect(yield* fs.readFileString(plan.unitPath)).toContain(expectedLauncher);
         expect(
           commands.filter(
             (command) =>
@@ -777,8 +781,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
   it.effect("installs, reports current state, and uninstalls on macOS", () =>
     Effect.gen(function* () {
-      const { service, fs, statePath, commands, timeouts, runtime, control } =
-        yield* makeHarness("darwin");
+      const { service, fs, statePath, commands, timeouts, control } = yield* makeHarness("darwin");
       const path = yield* Path.Path;
       const plan = yield* service.install();
 
@@ -795,7 +798,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         activeVersion: "1.2.3",
       });
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
-        `    <string>${runtime.entryPath}</string>\n    <string>__service-launcher</string>`,
+        `    <string>${plan.program[0]}</string>\n    <string>__service-launcher</string>`,
       );
       expect(yield* service.status).toMatchObject({
         current: true,
@@ -887,6 +890,33 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
       yield* service.install();
       expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  it.effect("keeps the approved macOS launcher unchanged across runtime upgrades", () =>
+    Effect.gen(function* () {
+      const { service, makeService, fs, statePath, baseDir } = yield* makeHarness("darwin");
+      const path = yield* Path.Path;
+      const first = yield* service.install();
+      const launcher = path.join(
+        baseDir,
+        "runtime",
+        "service-launcher",
+        String(SERVICE_LAUNCHER_PROTOCOL),
+        "t3",
+      );
+      expect(first.program).toEqual([launcher, "__service-launcher"]);
+      const original = yield* fs.readFileString(launcher);
+      const next = yield* makeService(macInstallerPath, "1.2.4");
+      const paths = pinnedRuntimePaths(path, baseDir, "1.2.4", "darwin");
+      yield* fs.writeFileString(paths.entryPath, "#!/bin/sh\n# next runtime\n");
+
+      const upgraded = yield* next.install();
+
+      expect(upgraded.program).toEqual(first.program);
+      expect(yield* fs.readFileString(launcher)).toBe(original);
+      expect(parseServiceState(yield* fs.readFileString(statePath))?.activeVersion).toBe("1.2.4");
+      expect((yield* next.status).current).toBe(true);
     }),
   );
 
