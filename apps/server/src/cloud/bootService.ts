@@ -299,7 +299,7 @@ function launchdManager(input: {
   );
   const domainTarget = `gui/${input.uid}`;
   const serviceTarget = `${domainTarget}/${BOOT_SERVICE_LAUNCHD_LABEL}`;
-  // Unloaded jobs may reject bootout/enable. Bootstrap starts RunAtLoad/KeepAlive jobs; kickstart would restart them.
+  // launchd may defer RunAtLoad after bootstrap. kickstart without -k leaves an active process alone.
   return {
     kind: "launchd",
     unitPath,
@@ -327,16 +327,28 @@ function launchdManager(input: {
         optional: true,
       },
       {
-        step: "starting the service",
+        step: "registering the launch agent",
         command: "launchctl",
         args: ["bootstrap", domainTarget, unitPath],
+      },
+      {
+        step: "starting the service",
+        command: "launchctl",
+        args: ["kickstart", serviceTarget],
       },
     ],
     restart: [
       {
-        step: "restarting the service after a failed update",
+        step: "registering the launch agent after a failed update",
         command: "launchctl",
         args: ["bootstrap", domainTarget, unitPath],
+        // Failed activation may have registered the job before failing to start it.
+        optional: true,
+      },
+      {
+        step: "restarting the service after a failed update",
+        command: "launchctl",
+        args: ["kickstart", serviceTarget],
       },
     ],
     // Persisted launchctl disable overrides would block reinstall.

@@ -106,15 +106,18 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   const timeouts = new Map<string, unknown>();
   const control: {
     failCommand: string | undefined;
+    failOnce?: boolean;
     stateAfterStop?: string;
     linger: string;
     enabled: boolean;
     active: boolean;
+    loaded: boolean;
   } = {
     failCommand: undefined,
     linger: "yes",
     enabled: true,
-    active: true,
+    active: platform !== "darwin",
+    loaded: false,
   };
   const runner = ProcessRunner.ProcessRunner.of({
     run: Effect.fn("test.run_boot_service_command")(function* (
@@ -124,7 +127,19 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       commands.push(command);
       invocations.push(input);
       timeouts.set(command, input.timeout);
-      const failed = command === control.failCommand;
+      const bootstrap = input.command === "launchctl" && input.args[0] === "bootstrap";
+      const kickstart = input.command === "launchctl" && input.args[0] === "kickstart";
+      const requestedFailure = command === control.failCommand;
+      if (requestedFailure && control.failOnce) control.failCommand = undefined;
+      const failed =
+        requestedFailure || (bootstrap && control.loaded) || (kickstart && !control.loaded);
+      // launchd can register a RunAtLoad job without starting it.
+      if (bootstrap && !failed) control.loaded = true;
+      if (kickstart && !failed) control.active = true;
+      if (command.startsWith("launchctl bootout --wait ")) {
+        control.loaded = false;
+        control.active = false;
+      }
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
       if (!failed && command === "systemctl --user enable t3code.service") control.enabled = true;
@@ -424,6 +439,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
             : [
                 "launchctl bootout --wait gui/501/com.t3tools.t3code.service",
                 `launchctl bootstrap gui/501 ${plan.unitPath}`,
+                "launchctl kickstart gui/501/com.t3tools.t3code.service",
               ],
         );
       }),
@@ -761,7 +777,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
   it.effect("installs, reports current state, and uninstalls on macOS", () =>
     Effect.gen(function* () {
-      const { service, fs, statePath, commands, timeouts, runtime } = yield* makeHarness("darwin");
+      const { service, fs, statePath, commands, timeouts, runtime, control } =
+        yield* makeHarness("darwin");
       const path = yield* Path.Path;
       const plan = yield* service.install();
 
@@ -784,12 +801,28 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         current: true,
         installedVersion: "1.2.3",
       });
+      expect(control.active).toBe(true);
+      yield* service.restart;
+      expect(control.active).toBe(true);
       expect(yield* service.uninstall).toBe(true);
+      expect(control.active).toBe(false);
       expect((yield* service.status).installed).toBe(false);
       expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
       // launchd can take 90s to bootout; the runner's 60s default could let bootstrap race it.
       expect(timeouts.get("launchctl bootout --wait gui/501/com.t3tools.t3code.service")).toEqual(
         Duration.seconds(120),
+      );
+    }),
+  );
+
+  it.effect("starts deferred macOS launch agents explicitly after bootstrap", () =>
+    Effect.gen(function* () {
+      const { service, commands } = yield* makeHarness("darwin");
+      yield* service.install();
+      const bootstrap = commands.findIndex((command) => command.startsWith("launchctl bootstrap "));
+      expect(bootstrap).toBeGreaterThanOrEqual(0);
+      expect(commands[bootstrap + 1]).toBe(
+        "launchctl kickstart gui/501/com.t3tools.t3code.service",
       );
     }),
   );
@@ -857,6 +890,25 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect("starts an already registered macOS job when install recovery runs", () =>
+    Effect.gen(function* () {
+      const { service, control } = yield* makeHarness("darwin");
+      yield* service.install();
+      control.failCommand = "launchctl kickstart gui/501/com.t3tools.t3code.service";
+      control.failOnce = true;
+
+      expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+      expect(control.loaded).toBe(true);
+      expect(control.active).toBe(true);
+      expect((yield* service.status).current).toBe(false);
+
+      control.failCommand = undefined;
+      yield* service.install();
+      expect(control.active).toBe(true);
+      expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
   it.effect("keeps failed launch agent installs pending until activation succeeds", () =>
     Effect.gen(function* () {
       const { service, fs, statePath, commands, control } = yield* makeHarness("darwin");
@@ -873,10 +925,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       });
       expect(yield* fs.readFileString(markerPath)).toBe("1.2.3\n");
 
+      expect(control.active).toBe(false);
       control.failCommand = undefined;
       commands.length = 0;
       yield* service.install();
 
+      expect(control.active).toBe(true);
       expect(commands).toContain(bootstrap);
       expect(yield* fs.exists(markerPath)).toBe(false);
       expect((yield* service.status).current).toBe(true);
