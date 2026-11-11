@@ -70,12 +70,15 @@ export class ProjectFolderTransferError extends Schema.TaggedError<ProjectFolder
       "incomplete",
       "io",
       "observation_limit",
+      "busy",
     ]),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     switch (this.reason) {
+      case "busy":
+        return "Folder updates are waiting for active work to finish and workspace activity to be verified. Retry when the folder is idle.";
       case "observation_limit":
         return "Too many folders are being watched. Pause unused shared projects and retry.";
       case "invalid_path":

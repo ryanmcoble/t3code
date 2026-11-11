@@ -19,6 +19,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
+import * as WorkspaceMutationGuard from "../workspace/WorkspaceMutationGuard.ts";
 import * as ContentSource from "./SharedProjectContentSource.ts";
 import * as Enrollment from "./SharedProjectEnrollment.ts";
 import * as ProjectFolderTransfer from "./ProjectFolderTransfer.ts";
@@ -107,6 +108,11 @@ const fixture = Effect.gen(function* () {
     ),
     Layer.provide(
       ProjectFolderTransfer.layer.pipe(
+        Layer.provide(
+          Layer.succeed(WorkspaceMutationGuard.WorkspaceMutationGuard, {
+            withIdle: (_cwds, effect) => effect,
+          }),
+        ),
         Layer.provide(
           Layer.mock(KnownWorkspaces.KnownWorkspaces)({ assertContains: () => Effect.void }),
         ),

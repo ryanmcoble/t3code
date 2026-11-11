@@ -36,6 +36,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 
 vi.mock("effect/SynchronizedRef", async (importOriginal) => {
   const original = await importOriginal<typeof SynchronizedRef>();
@@ -405,6 +406,62 @@ it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
+  it.effect("waits to send terminal input while a parent workspace is being updated", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const fs = yield* FileSystem.FileSystem;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-terminal-fence-" });
+      const cwd = `${parent}/nested`;
+      yield* fs.makeDirectory(cwd);
+      yield* manager.open(openInput({ cwd, terminalId: "default" }));
+      const release = yield* Deferred.make<void>();
+      const holder = yield* withWorkspaceLease(parent, Deferred.await(release)).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const input = yield* manager
+        .write({ threadId: "thread-1", terminalId: "default", data: "make build\r" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      expect(ptyAdapter.processes[0]!.writes).toEqual([]);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+      yield* Fiber.join(input);
+      expect(ptyAdapter.processes[0]!.writes).toEqual(["make build\r"]);
+    }),
+  );
+
+  it.effect(
+    "checks workspace terminal activity afresh and fails closed when inspection is unavailable",
+    () =>
+      Effect.gen(function* () {
+        let busy = false;
+        let unavailable = false;
+        const { manager } = yield* createManager(5, {
+          subprocessInspector: () =>
+            unavailable
+              ? Effect.die("fixture inspection unavailable")
+              : Effect.succeed({
+                  hasRunningSubprocess: busy,
+                  childCommand: busy ? "node" : null,
+                  processIds: [],
+                }),
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-terminal-activity-" });
+        const cwd = `${parent}/nested`;
+        yield* fs.makeDirectory(cwd);
+        yield* manager.open(openInput({ cwd }));
+        expect(yield* manager.workspaceBusy([parent])).toBe(false);
+        busy = true;
+        expect(yield* manager.workspaceBusy([parent])).toBe(true);
+        expect(yield* manager.workspaceBusy([`${parent}-unrelated`])).toBe(false);
+        busy = false;
+        unavailable = true;
+        expect(yield* manager.workspaceBusy([parent])).toBe(true);
+        yield* manager.close({ threadId: "thread-1" });
+        expect(yield* manager.workspaceBusy([parent])).toBe(false);
+      }),
+  );
+
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

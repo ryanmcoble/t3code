@@ -49,15 +49,62 @@ import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../config.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
 import * as ProjectFolderTransfer from "./ProjectFolderTransfer.ts";
+import * as WorkspaceMutationGuard from "../workspace/WorkspaceMutationGuard.ts";
 
 const decodeFolderImport = Schema.decodeUnknownSync(ProjectFolderImportInput);
 
-const layer = ProjectFolderTransfer.layer.pipe(
-  Layer.provide(Layer.mock(KnownWorkspaces.KnownWorkspaces)({ assertContains: () => Effect.void })),
-  Layer.provide(
-    ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-folder-config-" }),
-  ),
-  Layer.provideMerge(NodeServices.layer),
+const layerWithGuard = (guard: WorkspaceMutationGuard.WorkspaceMutationGuard["Service"]) =>
+  ProjectFolderTransfer.layer.pipe(
+    Layer.provide(Layer.succeed(WorkspaceMutationGuard.WorkspaceMutationGuard, guard)),
+    Layer.provide(
+      Layer.mock(KnownWorkspaces.KnownWorkspaces)({ assertContains: () => Effect.void }),
+    ),
+    Layer.provide(
+      ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-folder-config-" }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  );
+const layer = layerWithGuard({ withIdle: (_cwds, effect) => effect });
+
+it.effect(
+  "keeps staged bytes for retry when active workspace activity blocks folder installation",
+  () => {
+    let blocked = true;
+    const guarded = layerWithGuard({
+      withIdle: (_cwds, effect) =>
+        blocked
+          ? Effect.fail(new WorkspaceMutationGuard.WorkspaceBusyError({ reason: "active" }))
+          : effect,
+    });
+    return Effect.gen(function* () {
+      const { source, destination, service } = yield* fixture;
+      yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(source, "README"), "preserved"));
+      const exported = yield* service.exportFolder({ cwd: source });
+      const imported = yield* service.importFolder({
+        destinationPath: destination,
+        entries: exported.entries,
+      });
+      const chunk = yield* service.read({
+        transferId: exported.transferId,
+        relativePath: "README",
+        offset: 0,
+      });
+      yield* service.write({
+        transferId: imported.transferId,
+        relativePath: "README",
+        offset: 0,
+        ...chunk,
+      });
+      const result = yield* service.finish({ transferId: imported.transferId }).pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") expect(result.failure.reason).toBe("busy");
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(destination)).toBe(false);
+      blocked = false;
+      yield* service.finish({ transferId: imported.transferId });
+      expect(yield* fs.readFileString(NodePath.join(destination, "README"))).toBe("preserved");
+    }).pipe(Effect.scoped, Effect.provide(guarded));
+  },
 );
 
 const fixture = Effect.gen(function* () {

@@ -1,5 +1,6 @@
 import * as SharedProjectEnrollment from "./project/SharedProjectEnrollment.ts";
 import * as SharedProjectContentSource from "./project/SharedProjectContentSource.ts";
+import * as WorkspaceMutationGuard from "./workspace/WorkspaceMutationGuard.ts";
 import * as SharedProjectHttp from "./project/sharedProjectHttp.ts";
 import * as ProjectStoreV2 from "./orchestration-v2/ProjectStore.ts";
 import * as MemoryTurnObserver from "./memory/MemoryTurnObserver.ts";
@@ -492,7 +493,16 @@ const layerWorkspace = Layer.mergeAll(
   WorkspacePaths.layer,
   layerWorkspaceEntries,
   layerWorkspaceFileSystem,
-  ProjectFolderTransfer.layer.pipe(Layer.provide(layerKnownWorkspaces)),
+  ProjectFolderTransfer.layer.pipe(
+    Layer.provide(layerKnownWorkspaces),
+    Layer.provide(
+      WorkspaceMutationGuard.layer.pipe(
+        Layer.provide(layerTerminal),
+        Layer.provide(ProjectionStoreV2.layer),
+        Layer.provide(ProjectStore.layer),
+      ),
+    ),
+  ),
 );
 
 const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(

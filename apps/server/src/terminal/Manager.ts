@@ -1,7 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto digest is effectful; a sync hash keeps historyPath a plain function.
 import * as NodeCrypto from "node:crypto";
 
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import { withWorkspaceLeases, workspacePathsOverlap } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
@@ -205,6 +205,9 @@ export class TerminalManager extends Context.Service<
 
     readonly write: (input: TerminalWriteInput) => Effect.Effect<void, TerminalError>;
 
+    /** Hold the workspace leases while checking and applying the guarded mutation. */
+    readonly workspaceBusy: (cwds: ReadonlyArray<string>) => Effect.Effect<boolean>;
+
     readonly resize: (
       input: TerminalResizeInput,
       viewerId?: string,
@@ -279,6 +282,7 @@ interface TerminalSessionState {
   terminalId: string;
   cwd: string;
   worktreePath: string | null;
+  workspaceLeasePaths: ReadonlyArray<string>;
   status: TerminalSessionStatus;
   pid: number | null;
   history: BoundedTerminalHistory;
@@ -2426,6 +2430,18 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return yield* trySpawn(shellCandidates, spawnEnv, session, index + 1, spawnError);
   });
 
+  const workspaceLeasePaths = Effect.fn("terminal.workspaceLeasePaths")(function* (input: {
+    readonly cwd: string;
+    readonly worktreePath?: string | null | undefined;
+  }) {
+    const roots = [path.resolve(input.cwd)];
+    if (input.worktreePath) roots.push(path.resolve(input.worktreePath));
+    const canonical = yield* Effect.forEach(roots, (root) =>
+      fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
+    );
+    return [...new Set([...roots, ...canonical])];
+  });
+
   const startSession = Effect.fn("terminal.startSession")(function* (
     session: TerminalSessionState,
     input: TerminalStartInput,
@@ -2440,10 +2456,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
 
     const startingAt = yield* nowIso;
+    const leasePaths = yield* workspaceLeasePaths(input);
     yield* modifyManagerState((state) => {
       session.status = "starting";
       session.cwd = input.cwd;
       session.worktreePath = input.worktreePath ?? null;
+      session.workspaceLeasePaths = leasePaths;
       session.cols = input.cols;
       session.rows = input.rows;
       session.exitCode = null;
@@ -2877,6 +2895,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         terminalId,
         cwd: input.cwd,
         worktreePath: input.worktreePath ?? null,
+        workspaceLeasePaths: [path.resolve(input.worktreePath ?? input.cwd)],
         status: "starting",
         pid: null,
         history,
@@ -2978,9 +2997,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   });
 
   const openLocked = (input: TerminalOpenInput) =>
-    withWorkspaceLease(
-      path.resolve(input.worktreePath ?? input.cwd),
-      openWithWorkspaceLease(input),
+    workspaceLeasePaths(input).pipe(
+      Effect.flatMap((roots) => withWorkspaceLeases(roots, openWithWorkspaceLease(input))),
     );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
@@ -3334,25 +3352,70 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const terminalId = input.terminalId;
     const session = yield* requireSession(input.threadId, terminalId);
     const process = session.process;
-    if (!process || session.status !== "running") {
-      if (session.status === "exited") return;
-      return yield* new TerminalNotRunningError({
-        threadId: input.threadId,
-        terminalId,
-      });
-    }
-    session.inputCount += 1;
-    yield* Effect.try({
-      try: () => process.write(input.data),
-      catch: (cause) =>
-        new TerminalWriteError({
-          threadId: input.threadId,
-          terminalId,
-          terminalPid: process.pid,
-          cause,
-        }),
-    });
+    const roots = session.workspaceLeasePaths;
+    yield* withWorkspaceLeases(
+      roots,
+      Effect.gen(function* () {
+        if (!process || session.status !== "running") {
+          if (session.status === "exited") return;
+          return yield* new TerminalNotRunningError({ threadId: input.threadId, terminalId });
+        }
+        if (session.process !== process || session.workspaceLeasePaths !== roots)
+          return yield* new TerminalWriteError({
+            threadId: input.threadId,
+            terminalId,
+            terminalPid: process.pid,
+            cause: new Error("The terminal restarted while input waited for its workspace."),
+          });
+        session.inputCount += 1;
+        yield* Effect.try({
+          try: () => process.write(input.data),
+          catch: (cause) =>
+            new TerminalWriteError({
+              threadId: input.threadId,
+              terminalId,
+              terminalPid: process.pid,
+              cause,
+            }),
+        });
+      }),
+    );
   });
+
+  const workspaceBusy = Effect.fn("terminal.workspaceBusy")(
+    function* (cwds: ReadonlyArray<string>) {
+      const sessions = [...(yield* readManagerState).sessions.values()].filter(
+        (session) =>
+          (session.status === "starting" || session.status === "running") &&
+          session.workspaceLeasePaths.some((root) =>
+            cwds.some((cwd) => workspacePathsOverlap(root, cwd)),
+          ),
+      );
+      if (sessions.length === 0) return false;
+      if (
+        sessions.some(
+          (session) => session.status === "starting" || !session.process || session.pid === null,
+        )
+      )
+        return true;
+      const marks = new Map(sessions.map((session) => [session, terminalActivityMark(session)]));
+      const { inspector: result } = yield* acquireSubprocessInspector(
+        platform === "win32" ? CLOSE_IDLE_QUERY_TIMEOUT.win32 : CLOSE_IDLE_QUERY_TIMEOUT.posix,
+      );
+      const inspector = yield* Effect.fromResult(result);
+      for (const session of sessions) {
+        const activity = yield* inspector(session.pid!);
+        if (
+          activity.hasRunningSubprocess ||
+          terminalActivityMark(session) !== marks.get(session) ||
+          session.status !== "running"
+        )
+          return true;
+      }
+      return false;
+    },
+    Effect.catchCause(() => Effect.succeed(true)),
+  );
 
   const resizeLocked = Effect.fn("terminal.resize")(function* (
     input: TerminalResizeInput,
@@ -3478,6 +3541,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     observeStream,
     resyncStream,
     write,
+    workspaceBusy,
     resize,
     clear,
     close,

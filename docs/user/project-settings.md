@@ -290,3 +290,5 @@ thread, choose the other machine and **Continue** to open a continuation with th
 transcript in its existing folder. File syncing runs independently of this handoff.
 
 Automatic sync updates individual files and preserves the folder and unchanged file handles. If interrupted mid-sync, the next comparison resumes from the saved baseline. Conflicting edits are kept on both machines and pause syncing until resolved.
+
+Folder updates wait for active threads and terminal commands in the affected workspace to finish. If T3 cannot verify that the workspace is idle, it pauses the update and keeps the staged copy available for retry.

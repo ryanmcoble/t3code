@@ -2,7 +2,98 @@ import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
+import * as Cause from "effect/Cause";
 import { withWorkspaceLease, withWorkspaceLeases } from "./workspaceLease.ts";
+
+it.effect(
+  "lets a queued parent finish before later children and removes cancelled hierarchy waiters",
+  () =>
+    Effect.gen(function* () {
+      const release = yield* Deferred.make<void>();
+      const parentEntered = yield* Deferred.make<void>();
+      const parentRelease = yield* Deferred.make<void>();
+      const childEntered = yield* Deferred.make<void>();
+      const first = yield* withWorkspaceLease("lease-fair/left", Deferred.await(release)).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const parent = yield* withWorkspaceLease(
+        "lease-fair",
+        Deferred.succeed(parentEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(parentRelease)),
+        ),
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      const later = yield* withWorkspaceLease(
+        "lease-fair/right",
+        Deferred.succeed(childEntered, undefined),
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      assert.isFalse(yield* Deferred.isDone(childEntered));
+      assert.equal(yield* withWorkspaceLease("lease-fair-unrelated", Effect.succeed(42)), 42);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(first);
+      yield* Deferred.await(parentEntered);
+      assert.isFalse(yield* Deferred.isDone(childEntered));
+      yield* Fiber.interrupt(later);
+      yield* Deferred.succeed(parentRelease, undefined);
+      yield* Fiber.join(parent);
+      assert.equal(yield* withWorkspaceLease("lease-fair", Effect.succeed(63)), 63);
+    }).pipe(Effect.scoped),
+);
+
+it.effect("fails a contended nested expansion instead of deadlocking two root owners", () =>
+  Effect.gen(function* () {
+    const release = yield* Deferred.make<void>();
+    const other = yield* withWorkspaceLease("lease-expand/right", Deferred.await(release)).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    const expanded = yield* withWorkspaceLease(
+      "lease-expand/left",
+      withWorkspaceLease("lease-expand", Effect.void),
+    ).pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(expanded));
+    if (Exit.isFailure(expanded)) assert.isTrue(Cause.hasDies(expanded.cause));
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(other);
+    assert.equal(
+      yield* withWorkspaceLeases(["lease-expand/left", "lease-expand/right"], Effect.succeed(42)),
+      42,
+    );
+  }).pipe(Effect.scoped),
+);
+
+it.effect("fences descendant folders while unrelated and sibling folders remain concurrent", () =>
+  Effect.gen(function* () {
+    const release = yield* Deferred.make<void>();
+    const childEntered = yield* Deferred.make<void>();
+    const holder = yield* withWorkspaceLease("lease-hierarchy", Deferred.await(release)).pipe(
+      Effect.forkChild({ startImmediately: true }),
+    );
+    const child = yield* withWorkspaceLease(
+      "lease-hierarchy/nested/terminal",
+      Deferred.succeed(childEntered, undefined),
+    ).pipe(Effect.forkChild({ startImmediately: true }));
+    assert.isFalse(yield* Deferred.isDone(childEntered));
+    assert.equal(yield* withWorkspaceLease("lease-hierarchy-unrelated", Effect.succeed(42)), 42);
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(holder);
+    yield* Fiber.join(child);
+    const siblingRelease = yield* Deferred.make<void>();
+    const left = yield* withWorkspaceLease(
+      "lease-hierarchy/left",
+      Deferred.await(siblingRelease),
+    ).pipe(Effect.forkChild({ startImmediately: true }));
+    assert.equal(yield* withWorkspaceLease("lease-hierarchy/right", Effect.succeed(63)), 63);
+    yield* Deferred.succeed(siblingRelease, undefined);
+    yield* Fiber.join(left);
+    assert.equal(
+      yield* withWorkspaceLease(
+        "lease-hierarchy",
+        withWorkspaceLease("lease-hierarchy/nested", Effect.succeed(99)),
+      ),
+      99,
+    );
+  }).pipe(Effect.scoped),
+);
 
 it.effect("allows nested operations in the owning fiber without releasing the outer lease", () =>
   Effect.gen(function* () {
