@@ -69,6 +69,18 @@ shared project enrollment support, and the destination must be able to reach the
 owner's HTTPS route. The connection follows project definitions in the background,
 including after restarting T3; file-content replication is separate.
 
+For non-Git roots, enable **Receive file folders** on the member after enrollment
+and mapping. This grants scoped file access to the owner and receives its snapshots
+in the background, even with Settings closed. Local edits are kept and are not
+published back to the owner. Git history, account sign-ins, and execution readiness
+are prepared separately.
+
+Open **Folder preparation** to check saved status. Conflicting files keep both
+versions privately on the receiving machine. Review the paths and choose to keep
+local versions or use saved owner versions; either choice preserves the recovery
+copies. If files changed since the saved conflict, refresh before resolving it.
+Stopping file receiving preserves local files and recovery copies.
+
 Pause stops background definition updates. Refresh checks the owner immediately.
 Disconnect removes the local subscription credential and detaches local mappings,
 preserving the folders and cached project history. The owner can revoke a member's

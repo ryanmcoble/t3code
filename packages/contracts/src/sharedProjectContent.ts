@@ -1,6 +1,56 @@
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProjectFolderChunk, ProjectFolderEntries } from "./projectFolder.ts";
+import { SharedProjectManifest, SharedProjectRoot } from "./sharedProject.ts";
+
+export const SharedProjectContentPhase = Schema.Literals([
+  "current",
+  "local-changes",
+  "conflict",
+  "waiting",
+  "error",
+]);
+export const SharedProjectContentTarget = Schema.Struct({
+  sharedProjectId: SharedProjectManifest.fields.id,
+  rootId: SharedProjectRoot.fields.id,
+});
+export const SharedProjectContentReceipt = Schema.Struct({
+  ...SharedProjectContentTarget.fields,
+  generation: PositiveInt,
+  manifestRevision: PositiveInt,
+  bindingRevision: PositiveInt,
+  phase: SharedProjectContentPhase,
+  sourceHash: Schema.NullOr(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))),
+  conflictCount: NonNegativeInt,
+  error: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1024))),
+});
+export const SharedProjectContentStateInput = Schema.Struct({
+  sharedProjectId: SharedProjectManifest.fields.id,
+});
+export const SharedProjectContentState = Schema.Struct({
+  roots: Schema.Array(SharedProjectContentReceipt).check(Schema.isMaxLength(16)),
+});
+export const SharedProjectContentResolve = Schema.Struct({
+  ...SharedProjectContentTarget.fields,
+  expectedGeneration: PositiveInt,
+  choice: Schema.Literals(["local", "owner"]),
+});
+export const SharedProjectContentCommand = Schema.Union([
+  Schema.Struct({ operation: Schema.Literal("refresh"), ...SharedProjectContentTarget.fields }),
+  Schema.Struct({ operation: Schema.Literal("resolve"), ...SharedProjectContentResolve.fields }),
+]);
+export const SharedProjectContentConflictInput = Schema.Struct({
+  ...SharedProjectContentTarget.fields,
+  cursor: NonNegativeInt,
+});
+export const SharedProjectContentConflictPage = Schema.Struct({
+  generation: PositiveInt,
+  paths: Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(4096))).check(
+    Schema.isMaxLength(64),
+  ),
+  nextCursor: Schema.NullOr(NonNegativeInt),
+  total: NonNegativeInt,
+});
 
 const SessionId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 export const SharedProjectContentRequest = Schema.Union([
@@ -60,6 +110,7 @@ export const SharedProjectContentResponse = Schema.Union([
 export class SharedProjectContentError extends Schema.TaggedError<SharedProjectContentError>()(
   "SharedProjectContentError",
   {
+    origin: Schema.optionalKey(Schema.Literal("owner")),
     reason: Schema.Literals([
       "unmapped",
       "stale",
@@ -75,6 +126,9 @@ export class SharedProjectContentError extends Schema.TaggedError<SharedProjectC
   },
 ) {
   override get message(): string {
+    return this.origin === "owner" ? `Project owner: ${this.description}` : this.description;
+  }
+  private get description(): string {
     switch (this.reason) {
       case "observation-limit":
         return "Too many shared folders are being watched. Pause unused shared projects and retry.";

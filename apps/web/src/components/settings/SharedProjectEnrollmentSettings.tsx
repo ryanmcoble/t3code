@@ -2,7 +2,11 @@ import { useAtomValue } from "@effect/atom-react";
 import { linkableMachines } from "@t3tools/client-runtime/link-request";
 import { sharedProjectMemberLabel } from "@t3tools/client-runtime/state/shared-capabilities";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, SharedProjectManifest } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  SharedProjectManifest,
+  SharedProjectBinding,
+} from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useEnvironments } from "~/state/environments";
@@ -11,13 +15,16 @@ import { sharedCapabilities } from "~/state/sharedCapabilities";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { SharedProjectFilesSettings } from "./SharedProjectFilesSettings";
 
 export function SharedProjectEnrollmentSettings({
   environmentId,
   projects,
+  bindings,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projects: ReadonlyArray<SharedProjectManifest>;
+  readonly bindings: ReadonlyArray<SharedProjectBinding>;
 }) {
   const { environments } = useEnvironments();
   const owners = environments.filter(
@@ -229,6 +236,17 @@ export function SharedProjectEnrollmentSettings({
               Disconnect
             </Button>
           </div>
+          {environments.find((machine) => machine.environmentId === environmentId)?.serverConfig
+            ?.environment.capabilities.sharedProjectFileControls === 1 ? (
+            <SharedProjectFilesSettings
+              environmentId={environmentId}
+              subscription={subscription}
+              project={projects.find((project) => project.id === subscription.sharedProjectId)}
+              binding={bindings.find(
+                (binding) => binding.sharedProjectId === subscription.sharedProjectId,
+              )}
+            />
+          ) : null}
         </div>
       ))}
     </div>

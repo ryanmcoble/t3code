@@ -2,7 +2,11 @@ import { useAtomValue } from "@effect/atom-react";
 import { linkableMachines } from "@t3tools/client-runtime/link-request";
 import { sharedProjectMemberLabel } from "@t3tools/client-runtime/state/shared-capabilities";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, SharedProjectManifest } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  SharedProjectManifest,
+  SharedProjectBinding,
+} from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { Alert, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -12,13 +16,16 @@ import { useEnvironments } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { sharedCapabilities } from "../../state/sharedCapabilities";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { SharedProjectFilesSection } from "./SharedProjectFilesSection";
 
 export function SharedProjectEnrollmentSection({
   environmentId,
   projects,
+  bindings,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projects: ReadonlyArray<SharedProjectManifest>;
+  readonly bindings: ReadonlyArray<SharedProjectBinding>;
 }) {
   const { environments } = useEnvironments();
   const owners = environments.filter(
@@ -206,6 +213,17 @@ export function SharedProjectEnrollmentSection({
             disabled={busy || !canConfigure}
             onPress={() => disconnect(subscription.sharedProjectId)}
           />
+          {environments.find((machine) => machine.environmentId === environmentId)?.serverConfig
+            ?.environment.capabilities.sharedProjectFileControls === 1 ? (
+            <SharedProjectFilesSection
+              environmentId={environmentId}
+              project={projects.find((project) => project.id === subscription.sharedProjectId)}
+              binding={bindings.find(
+                (binding) => binding.sharedProjectId === subscription.sharedProjectId,
+              )}
+              subscription={subscription}
+            />
+          ) : null}
         </View>
       ))}
     </View>

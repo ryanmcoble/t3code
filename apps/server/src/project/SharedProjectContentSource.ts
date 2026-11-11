@@ -5,6 +5,8 @@ import {
   type SharedProjectContentResponse,
   type SharedProjectError,
   type ProjectFolderEntry,
+  type ProjectFolderTransferError,
+  type SharedProjectBinding,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -21,6 +23,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectFolderTransfer from "./ProjectFolderTransfer.ts";
 import * as SharedProjectEnrollment from "./SharedProjectEnrollment.ts";
 import * as SharedProjects from "./SharedProjects.ts";
+import * as WorkspaceMutationGuard from "../workspace/WorkspaceMutationGuard.ts";
 
 interface Snapshot {
   readonly projectId: string;
@@ -60,6 +63,7 @@ const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
   const clock = yield* Clock.Clock;
+  const guard = yield* WorkspaceMutationGuard.WorkspaceMutationGuard;
   const gate = yield* Semaphore.make(1);
   const snapshots = new Map<string, Snapshot>();
   const ttl = 5 * 60_000;
@@ -70,6 +74,51 @@ const make = Effect.gen(function* () {
         Effect.map(Hex.encode),
         Effect.mapError(() => new SharedProjectContentError({ reason: "storage" })),
       );
+  const withMappedIdle = Effect.fn("SharedProjectContentSource.withMappedIdle")(function* <A>(
+    binding: SharedProjectBinding,
+    effect: Effect.Effect<A, ProjectFolderTransferError>,
+  ) {
+    return yield* guard
+      .withIdle(
+        binding.roots.map((root) => root.path),
+        Effect.gen(function* () {
+          const fresh = yield* projects.getBinding(binding.sharedProjectId);
+          const manifest = yield* projects.get(binding.sharedProjectId);
+          if (
+            fresh?.revision !== binding.revision ||
+            fresh.detached ||
+            fresh.paused ||
+            manifest.archived ||
+            manifest.revision !== binding.manifestRevision
+          )
+            return yield* new SharedProjectContentError({ reason: "stale" });
+          for (const mapping of binding.roots) {
+            const project = yield* localProjects
+              .getShell(mapping.projectId)
+              .pipe(Effect.mapError(() => new SharedProjectContentError({ reason: "unmapped" })));
+            if (Option.isNone(project))
+              return yield* new SharedProjectContentError({ reason: "unmapped" });
+            const real = yield* fs
+              .realPath(project.value.workspaceRoot)
+              .pipe(Effect.mapError(() => new SharedProjectContentError({ reason: "unmapped" })));
+            if (real !== mapping.path)
+              return yield* new SharedProjectContentError({ reason: "stale" });
+          }
+          return yield* effect;
+        }),
+      )
+      .pipe(
+        Effect.mapError((cause) => {
+          if (cause._tag === "SharedProjectContentError" || cause._tag === "SharedProjectError")
+            return cause;
+          if (cause._tag === "WorkspaceBusyError")
+            return new SharedProjectContentError({
+              reason: cause.reason === "active" ? "busy" : "activity-unavailable",
+            });
+          return new SharedProjectContentError({ reason: "transfer" });
+        }),
+      );
+  });
   const close = Effect.fn("SharedProjectContentSource.close")(function* (id: string) {
     const snapshot = snapshots.get(id);
     snapshots.delete(id);
@@ -173,9 +222,10 @@ const make = Effect.gen(function* () {
                 yield* close(id);
             if (snapshots.size >= 4)
               return yield* new SharedProjectContentError({ reason: "busy" });
-            const exported = yield* transfer
-              .exportFolder({ cwd: path, contentPolicy: root.contentPolicy })
-              .pipe(Effect.mapError(() => new SharedProjectContentError({ reason: "transfer" })));
+            const exported = yield* withMappedIdle(
+              binding,
+              transfer.exportFolder({ cwd: path, contentPolicy: root.contentPolicy }),
+            );
             return yield* Effect.gen(function* () {
               if (
                 exported.entries.length > 100_000 ||
@@ -248,9 +298,23 @@ const make = Effect.gen(function* () {
             return { kind: "chunk", ...chunk };
           }
           snapshots.delete(request.sessionId);
-          yield* transfer
-            .exportEnd({ transferId: snapshot.transferId, validate: request.validate })
-            .pipe(Effect.mapError(() => new SharedProjectContentError({ reason: "transfer" })));
+          const end = transfer.exportEnd({
+            transferId: snapshot.transferId,
+            validate: request.validate,
+          });
+          yield* (
+            request.validate
+              ? withMappedIdle(binding, end)
+              : end.pipe(
+                  Effect.mapError(() => new SharedProjectContentError({ reason: "transfer" })),
+                )
+          ).pipe(
+            Effect.onError(() =>
+              transfer
+                .exportEnd({ transferId: snapshot.transferId, validate: false })
+                .pipe(Effect.ignore),
+            ),
+          );
           return { kind: "ended" };
         }),
       ),

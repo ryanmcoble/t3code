@@ -452,6 +452,62 @@ it.effect("denies manual cleanup before the handler without settings permission"
 );
 
 it.effect.each([
+  { scopes: [AuthSettingsWriteScope], missing: AuthFilesystemWriteScope, operation: "write" },
+  { scopes: [AuthFilesystemWriteScope], missing: AuthSettingsWriteScope, operation: "write" },
+  { scopes: [AuthSettingsWriteScope], missing: AuthFilesystemReadScope, operation: "read" },
+  { scopes: [AuthFilesystemReadScope], missing: AuthSettingsWriteScope, operation: "read" },
+])("protects shared content $operation with only $scopes", ({ scopes, missing, operation }) =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          | typeof WS_METHODS.sharedProjectContentCommand
+          | typeof WS_METHODS.sharedProjectContentConflict
+        > =>
+          tag !== WS_METHODS.sharedProjectContentCommand &&
+          tag !== WS_METHODS.sharedProjectContentConflict,
+      ),
+    );
+    let handled = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.sharedProjectContentCommand, () =>
+            Effect.sync(() => {
+              handled = true;
+            }),
+          ),
+          group.toLayerHandler(WS_METHODS.sharedProjectContentConflict, () =>
+            Effect.sync(() => {
+              handled = true;
+              return { generation: 1, paths: [], total: 0, nextCursor: null };
+            }),
+          ),
+          RpcAuthorization.layer(scopes),
+        ),
+      ),
+    );
+    const result =
+      operation === "write"
+        ? yield* client[WS_METHODS.sharedProjectContentCommand]({
+            operation: "refresh",
+            sharedProjectId: "sample",
+            rootId: "docs",
+          }).pipe(Effect.flip)
+        : yield* client[WS_METHODS.sharedProjectContentConflict]({
+            sharedProjectId: "sample",
+            rootId: "docs",
+            cursor: 0,
+          }).pipe(Effect.flip);
+    expect(result).toMatchObject({ requiredPermission: missing });
+    expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect.each([
   { scopes: [AuthSettingsWriteScope], missing: AuthFilesystemWriteScope },
   { scopes: [AuthFilesystemWriteScope], missing: AuthSettingsWriteScope },
 ])("does not enable project file receiving with only $scopes", ({ scopes, missing }) =>

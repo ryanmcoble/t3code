@@ -740,11 +740,17 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   ),
   Layer.provideMerge(
     SharedProjectContentReplica.layer.pipe(
+      Layer.provide(ProjectStore.layer),
       Layer.provide(SharedProjectContentStore.layer),
       Layer.provide(layerWorkspaceMutationGuard),
     ),
   ),
-  Layer.provideMerge(SharedProjectContentSource.layer.pipe(Layer.provide(ProjectStore.layer))),
+  Layer.provideMerge(
+    SharedProjectContentSource.layer.pipe(
+      Layer.provide(ProjectStore.layer),
+      Layer.provide(layerWorkspaceMutationGuard),
+    ),
+  ),
   Layer.provideMerge(SharedProjectEnrollment.layer),
   Layer.provideMerge(
     Layer.mergeAll(

@@ -1,4 +1,5 @@
 import * as SharedProjectEnrollment from "./project/SharedProjectEnrollment.ts";
+import * as SharedProjectContentReplica from "./project/SharedProjectContentReplica.ts";
 import * as ContainerMonitor from "./containers/ContainerMonitor.ts";
 import * as ManagedContainers from "./containers/ManagedContainers.ts";
 import * as SharedProjects from "./project/SharedProjects.ts";
@@ -563,6 +564,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ManagedContainers.ManagedContainers)({}),
   Layer.mock(SharedProjects.SharedProjects)({}),
   Layer.mock(SharedProjectEnrollment.SharedProjectEnrollment)({}),
+  Layer.mock(SharedProjectContentReplica.SharedProjectContentReplica)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
 );
 

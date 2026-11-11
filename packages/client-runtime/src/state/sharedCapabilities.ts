@@ -12,6 +12,7 @@ export { memoryRulesFromDraft, memoryRulesDraftError } from "../memoryRules.ts";
 export {
   sharedProjectMappingStatus,
   sharedProjectMemberLabel,
+  sharedProjectFileStatus,
 } from "../sharedProjectPresentation.ts";
 import {
   WS_METHODS,
@@ -115,6 +116,38 @@ export function createSharedCapabilityAtoms<R, E>(
     idleTtlMs: 0,
     refreshIntervalMs: 15_000,
   });
+  const sharedProjectContentState = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "sharedProjects:contentState",
+    tag: WS_METHODS.sharedProjectContentState,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+    refreshIntervalMs: 15_000,
+  });
+  const sharedProjectContentConflict = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "sharedProjects:contentConflict",
+    tag: WS_METHODS.sharedProjectContentConflict,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+  });
+  const sharedProjectContentCommand = createEnvironmentRpcCommand(runtime, {
+    label: "sharedProjects:contentCommand",
+    tag: WS_METHODS.sharedProjectContentCommand,
+    onSuccess: ({ environmentId, input }, registry) =>
+      Effect.sync(() => {
+        registry.refresh(
+          sharedProjectContentState({
+            environmentId,
+            input: { sharedProjectId: input.sharedProjectId },
+          }),
+        );
+        registry.refresh(
+          sharedProjectContentConflict({
+            environmentId,
+            input: { sharedProjectId: input.sharedProjectId, rootId: input.rootId, cursor: 0 },
+          }),
+        );
+      }),
+  });
   const sharedProjectGrant = createEnvironmentRpcCommand(runtime, {
     label: "sharedProjects:grant",
     tag: WS_METHODS.sharedProjectGrant,
@@ -136,6 +169,7 @@ export function createSharedCapabilityAtoms<R, E>(
         readonly destinationId: EnvironmentId;
         readonly sharedProjectId: string;
         readonly sourceUrl: string;
+        readonly receiveFiles?: boolean;
       },
       registry,
     ) {
@@ -146,6 +180,7 @@ export function createSharedCapabilityAtoms<R, E>(
             sharedProjectId: input.sharedProjectId,
             destinationEnvironmentId: input.destinationId,
             revoke: false,
+            access: input.receiveFiles ? "files" : "metadata",
           },
         }),
       );
@@ -160,6 +195,7 @@ export function createSharedCapabilityAtoms<R, E>(
             ownerEnvironmentId: input.ownerId,
             sourceUrl: input.sourceUrl,
             token: grant.value.token!,
+            receiveFiles: input.receiveFiles ?? false,
           },
         }),
       );
@@ -192,6 +228,9 @@ export function createSharedCapabilityAtoms<R, E>(
     sharedProjectGrant,
     sharedProjectEnrollmentCommand,
     enrollSharedProject,
+    sharedProjectContentState,
+    sharedProjectContentConflict,
+    sharedProjectContentCommand,
     sharedProjectPublish: createEnvironmentRpcCommand(runtime, {
       label: "sharedProjects:publish",
       tag: WS_METHODS.sharedProjectsPublish,

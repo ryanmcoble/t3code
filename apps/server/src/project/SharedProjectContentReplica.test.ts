@@ -68,20 +68,24 @@ const manifest: SharedProjectManifest = {
   ],
 };
 const idle = Layer.succeed(Guard.WorkspaceMutationGuard, { withIdle: (_paths, effect) => effect });
-const common = (cwd: string, environmentId: EnvironmentId) =>
+const common = (
+  cwd: string,
+  environmentId: EnvironmentId,
+  bindingRevision: () => number = () => 1,
+) =>
   Layer.mergeAll(
     Layer.mock(SharedProjects.SharedProjects)({
       get: () => Effect.succeed(manifest),
       getBinding: () =>
-        Effect.succeed({
+        Effect.sync(() => ({
           sharedProjectId: manifest.id,
           environmentId,
           manifestRevision: 1,
-          revision: 1,
+          revision: bindingRevision(),
           detached: false,
           paused: false,
           roots: [{ rootId: "docs", projectId, path: cwd }],
-        }),
+        })),
     }),
     Layer.mock(ProjectStore.ProjectStoreV2)({
       getShell: () =>
@@ -146,10 +150,11 @@ it.effect(
           let online = true;
           let enabled = true;
           let corruptSnapshot = false;
+          let bindingRevision = 1;
           const layer = Replica.layer.pipe(
             Layer.provideMerge(Store.layer),
             Layer.provideMerge(Transfer.layer),
-            Layer.provideMerge(common(cwd, environmentId)),
+            Layer.provideMerge(common(cwd, environmentId, () => bindingRevision)),
             Layer.provideMerge(
               Layer.mock(Enrollment.SharedProjectEnrollment)({
                 state: Effect.sync(() => ({
@@ -218,6 +223,9 @@ it.effect(
             setCorruptSnapshot: (value: boolean) => {
               corruptSnapshot = value;
             },
+            bumpBindingRevision: () => {
+              bindingRevision++;
+            },
           };
         });
       const a = yield* member(first);
@@ -236,6 +244,7 @@ it.effect(
         );
       }
       assert.equal((yield* firstServices.store.read(manifest.id, "docs"))?.record.phase, "current");
+      assert.equal((yield* firstServices.replica.state(manifest.id)).roots[0]?.phase, "current");
       b.setOnline(false);
       yield* fs.writeFileString(`${ownerRoot}/README.md`, "owner version two");
       watches.get(ownerRoot)!("README.md");
@@ -254,6 +263,8 @@ it.effect(
       assert.equal(yield* fs.readFileString(`${b.cwd}/README.md`), "owner version two");
       assert.equal((yield* restarted.store.read(manifest.id, "docs"))?.record.phase, "current");
       yield* fs.writeFileString(`${b.cwd}/README.md`, "member's distinct edit");
+      yield* fs.writeFileString(`${b.cwd}/local-only.md`, "unpublished local addition");
+      yield* fs.writeFileString(`${ownerRoot}/owner-addition.md`, "unrelated owner addition");
       watches.get(b.cwd)!("README.md");
       yield* fs.writeFileString(`${ownerRoot}/README.md`, "owner's distinct edit");
       watches.get(ownerRoot)!("README.md");
@@ -278,11 +289,91 @@ it.effect(
         });
       assert.equal(yield* readRetained(conflict.conflict.local), "member's distinct edit");
       assert.equal(yield* readRetained(conflict.conflict.remote), "owner's distinct edit");
+      const review = yield* restarted.replica.conflictPage({
+        sharedProjectId: manifest.id,
+        rootId: "docs",
+        cursor: 0,
+      });
+      assert.deepEqual(review.paths, ["README.md"]);
+      const useOwner = {
+        operation: "resolve",
+        sharedProjectId: manifest.id,
+        rootId: "docs",
+        expectedGeneration: review.generation,
+        choice: "owner",
+      } as const;
+      yield* fs.writeFileString(`${b.cwd}/README.md`, "edited after review");
+      const stale = yield* restarted.replica.command(useOwner).pipe(Effect.result);
+      if (stale._tag !== "Failure") return assert.fail("Expected post-review edit protection");
+      assert.equal(stale.failure.reason, "stale");
+      assert.equal(yield* fs.readFileString(`${b.cwd}/README.md`), "edited after review");
+      yield* fs.writeFileString(`${b.cwd}/README.md`, "member's distinct edit");
+      yield* restarted.replica.command(useOwner);
+      assert.equal(yield* fs.readFileString(`${b.cwd}/README.md`), "owner's distinct edit");
+      assert.equal(
+        yield* fs.readFileString(`${b.cwd}/owner-addition.md`),
+        "unrelated owner addition",
+      );
+      assert.equal(
+        yield* fs.readFileString(`${b.cwd}/local-only.md`),
+        "unpublished local addition",
+      );
+      assert.equal(yield* readRetained(conflict.conflict.local), "member's distinct edit");
+      assert.equal((yield* restarted.replica.state(manifest.id)).roots[0]?.conflictCount, 0);
+      yield* fs.writeFileString(`${b.cwd}/README.md`, "new work after recovery");
+      watches.get(b.cwd)!("README.md");
+      yield* restarted.replica.command(useOwner);
+      assert.equal(yield* fs.readFileString(`${b.cwd}/README.md`), "new work after recovery");
+      yield* restarted.replica.syncRoot(manifest.id, "docs");
+      b.bumpBindingRevision();
+      assert.equal((yield* restarted.replica.syncRoot(manifest.id, "docs")).phase, "local-changes");
+      yield* fs.writeFileString(`${ownerRoot}/README.md`, "another owner edit");
+      yield* fs.writeFileString(
+        `${ownerRoot}/second-addition.md`,
+        "owner addition during local recovery",
+      );
+      watches.get(ownerRoot)!("README.md");
+      yield* restarted.replica.syncRoot(manifest.id, "docs");
+      const nextReview = yield* restarted.replica.conflictPage({
+        sharedProjectId: manifest.id,
+        rootId: "docs",
+        cursor: 0,
+      });
+      yield* restarted.replica.command({
+        ...useOwner,
+        expectedGeneration: nextReview.generation,
+        choice: "local",
+      });
+      assert.equal(yield* fs.readFileString(`${b.cwd}/README.md`), "new work after recovery");
+      assert.equal((yield* restarted.replica.state(manifest.id)).roots[0]?.phase, "local-changes");
+      assert.equal(
+        yield* fs.readFileString(`${b.cwd}/second-addition.md`),
+        "owner addition during local recovery",
+      );
+      yield* fs.makeDirectory(`${b.cwd}/replacement`);
+      yield* fs.writeFileString(`${b.cwd}/replacement/local.md`, "local subtree");
+      yield* fs.writeFileString(`${ownerRoot}/replacement`, "owner file replaces subtree");
+      watches.get(b.cwd)!("replacement");
+      watches.get(ownerRoot)!("replacement");
+      assert.equal((yield* restarted.replica.syncRoot(manifest.id, "docs")).phase, "conflict");
+      const replacement = yield* restarted.replica.conflictPage({
+        sharedProjectId: manifest.id,
+        rootId: "docs",
+        cursor: 0,
+      });
+      assert.deepEqual(replacement.paths, ["replacement"]);
+      yield* restarted.replica.command({ ...useOwner, expectedGeneration: replacement.generation });
+      assert.equal(yield* fs.readFileString(`${b.cwd}/replacement`), "owner file replaces subtree");
+      assert.equal(
+        yield* fs.readFileString(`${b.cwd}/local-only.md`),
+        "unpublished local addition",
+      );
+      assert.equal(yield* fs.readFileString(`${b.cwd}/.env`), "second secret");
       b.setEnabled(false);
       assert.equal(
         (yield* restarted.replica.syncRoot(manifest.id, "docs").pipe(Effect.result))._tag,
         "Failure",
       );
-      assert.equal(yield* fs.readFileString(`${b.cwd}/README.md`), "member's distinct edit");
+      assert.equal(yield* fs.readFileString(`${b.cwd}/README.md`), "new work after recovery");
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );

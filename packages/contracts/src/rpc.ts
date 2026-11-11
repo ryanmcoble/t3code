@@ -11,6 +11,14 @@ import {
 } from "./containers.ts";
 import { ComputerUseState, ComputerUseCommand, ComputerUseError } from "./computerUse.ts";
 import {
+  SharedProjectContentStateInput,
+  SharedProjectContentState,
+  SharedProjectContentCommand,
+  SharedProjectContentConflictInput,
+  SharedProjectContentConflictPage,
+  SharedProjectContentError,
+} from "./sharedProjectContent.ts";
+import {
   SharedProjectState,
   SharedProjectEnrollmentState,
   SharedProjectEnrollmentCommand,
@@ -594,6 +602,9 @@ export const WS_METHODS = {
   sharedProjectEnrollmentState: "sharedProjects.enrollmentState",
   sharedProjectEnrollmentCommand: "sharedProjects.enrollmentCommand",
   sharedProjectGrant: "sharedProjects.grant",
+  sharedProjectContentState: "sharedProjects.contentState",
+  sharedProjectContentCommand: "sharedProjects.contentCommand",
+  sharedProjectContentConflict: "sharedProjects.contentConflict",
   computerUseState: "computerUse.state",
   computerUseCommand: "computerUse.command",
   memoryState: "memory.state",
@@ -939,6 +950,33 @@ const WsSharedProjectEnrollmentStateRpc = Rpc.make(WS_METHODS.sharedProjectEnrol
   payload: Schema.Struct({}),
   success: SharedProjectEnrollmentState,
   error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectContentStateRpc = Rpc.make(WS_METHODS.sharedProjectContentState, {
+  payload: SharedProjectContentStateInput,
+  success: SharedProjectContentState,
+  error: Schema.Union([
+    SharedProjectContentError,
+    SharedProjectError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+const WsSharedProjectContentCommandRpc = Rpc.make(WS_METHODS.sharedProjectContentCommand, {
+  payload: SharedProjectContentCommand,
+  success: Schema.Void,
+  error: Schema.Union([
+    SharedProjectContentError,
+    SharedProjectError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+const WsSharedProjectContentConflictRpc = Rpc.make(WS_METHODS.sharedProjectContentConflict, {
+  payload: SharedProjectContentConflictInput,
+  success: SharedProjectContentConflictPage,
+  error: Schema.Union([
+    SharedProjectContentError,
+    SharedProjectError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 const WsSharedProjectEnrollmentCommandRpc = Rpc.make(WS_METHODS.sharedProjectEnrollmentCommand, {
   payload: SharedProjectEnrollmentCommand,
@@ -2284,6 +2322,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsContainersManagedCommandRpc,
   WsSharedProjectsStateRpc,
   WsSharedProjectEnrollmentStateRpc,
+  WsSharedProjectContentStateRpc,
+  WsSharedProjectContentCommandRpc,
+  WsSharedProjectContentConflictRpc,
   WsSharedProjectEnrollmentCommandRpc,
   WsSharedProjectGrantRpc,
   WsSharedProjectsPublishRpc,

@@ -24,6 +24,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.sharedProjectsPublish]: AuthSettingsWriteScope,
   [WS_METHODS.sharedProjectEnrollmentCommand]: AuthSettingsWriteScope,
   [WS_METHODS.sharedProjectGrant]: AuthAccessWriteScope,
+  [WS_METHODS.sharedProjectContentCommand]: AuthFilesystemWriteScope,
   [WS_METHODS.sharedProjectsBind]: AuthSettingsWriteScope,
   [WS_METHODS.sharedProjectsUnbind]: AuthSettingsWriteScope,
   [WS_METHODS.computerUseCommand]: AuthSettingsWriteScope,
@@ -112,6 +113,10 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === WS_METHODS.sharedProjectContentCommand)
+    return [AuthSettingsWriteScope, AuthFilesystemWriteScope];
+  if (method === WS_METHODS.sharedProjectContentConflict)
+    return [AuthSettingsWriteScope, AuthFilesystemReadScope];
   if (method === WS_METHODS.sharedProjectEnrollmentCommand && input !== undefined) {
     const payload = decodeFileReceiving(input);
     if (

@@ -59,6 +59,7 @@ const fixture = Effect.gen(function* () {
   yield* fs.writeFileString(`${cwd}/private-notes/draft.md`, "private draft");
   let manifest = base;
   let registeredPath = cwd;
+  let beforeGuard: () => void = () => {};
   let binding: SharedProjectBinding = {
     sharedProjectId: base.id,
     environmentId: owner,
@@ -88,6 +89,11 @@ const fixture = Effect.gen(function* () {
     ),
   );
   const layer = ContentSource.layer.pipe(
+    Layer.provide(
+      Layer.succeed(WorkspaceMutationGuard.WorkspaceMutationGuard, {
+        withIdle: (_cwds, effect) => Effect.sync(() => beforeGuard()).pipe(Effect.andThen(effect)),
+      }),
+    ),
     Layer.provideMerge(enrollment),
     Layer.provide(projects),
     Layer.provide(
@@ -135,6 +141,9 @@ const fixture = Effect.gen(function* () {
     },
     setRegisteredPath: (value: string) => {
       registeredPath = value;
+    },
+    beforeGuard: (value: () => void) => {
+      beforeGuard = value;
     },
   };
 });
@@ -326,4 +335,29 @@ it.effect(
         yield* expectReason(start, "stale");
       }).pipe(Effect.provide(test.layer));
     }).pipe(Effect.provide(testLayer), Effect.scoped),
+);
+
+it.effect("rechecks registered paths after acquiring the workspace activity fence", () =>
+  Effect.gen(function* () {
+    const test = yield* fixture;
+    yield* Effect.gen(function* () {
+      const token = yield* grant();
+      test.beforeGuard(() => test.setRegisteredPath(`${test.cwd}/private-notes`));
+      const result = yield* request(token, start).pipe(Effect.result);
+      if (result._tag !== "Failure") return assert.fail("Expected remapping to invalidate export");
+      assert.equal(result.failure.reason, "stale");
+      test.beforeGuard(() => {});
+      test.setRegisteredPath(test.cwd);
+      const snapshot = yield* request(token, start);
+      if (snapshot.kind !== "snapshot") return assert.fail("Expected snapshot");
+      test.beforeGuard(() => test.setBinding({ paused: true }));
+      const ended = yield* request(token, {
+        operation: "end",
+        sessionId: snapshot.sessionId,
+        validate: true,
+      }).pipe(Effect.result);
+      if (ended._tag !== "Failure") return assert.fail("Expected pause to invalidate validation");
+      assert.equal(ended.failure.reason, "stale");
+    }).pipe(Effect.provide(test.layer));
+  }).pipe(Effect.provide(testLayer), Effect.scoped),
 );

@@ -3,10 +3,13 @@ import {
   EnvironmentId,
   type SharedProjectBinding,
   type SharedProjectManifest,
+  type SharedProjectSubscription,
+  type SharedProjectContentReceipt,
 } from "@t3tools/contracts";
 import {
   sharedProjectMappingStatus,
   sharedProjectMemberLabel,
+  sharedProjectFileStatus,
 } from "./sharedProjectPresentation.ts";
 
 const owner = EnvironmentId.make("owner");
@@ -73,5 +76,95 @@ describe("shared project mapping status", () => {
       "Work Mac",
     );
     expect(sharedProjectMemberLabel(peer, [])).toBe("Unavailable machine");
+  });
+});
+
+describe("shared project file status", () => {
+  const subscription: SharedProjectSubscription = {
+    sharedProjectId: project.id,
+    ownerEnvironmentId: owner,
+    sourceUrl: "https://owner.example",
+    paused: false,
+    receiveFiles: true,
+    observedRevision: 2,
+    lastCheckedAt: null,
+    error: null,
+  };
+  const receipt: typeof SharedProjectContentReceipt.Type = {
+    sharedProjectId: project.id,
+    rootId: "docs",
+    generation: 1,
+    manifestRevision: 2,
+    bindingRevision: 3,
+    phase: "current",
+    sourceHash: null,
+    conflictCount: 0,
+    error: null,
+  };
+  const input = { project, binding, subscription, receipt, environmentId: peer };
+  it("shows mapping and connection blockers before the last successful receipt", () => {
+    expect(sharedProjectFileStatus({ ...input, binding: undefined }).title).toBe(
+      "Choose local folders",
+    );
+    expect(sharedProjectFileStatus({ ...input, binding: { ...binding, paused: true } }).title).toBe(
+      "Paused",
+    );
+    expect(
+      sharedProjectFileStatus({ ...input, subscription: { ...subscription, receiveFiles: false } })
+        .title,
+    ).toBe("File receiving off");
+    expect(
+      sharedProjectFileStatus({ ...input, subscription: { ...subscription, paused: true } }).title,
+    ).toBe("Owner connection paused");
+    expect(
+      sharedProjectFileStatus({
+        ...input,
+        subscription: { ...subscription, error: "Owner unreachable" },
+      }).detail,
+    ).toBe("Owner unreachable");
+  });
+  it("does not turn a saved snapshot or stale mapping receipt into execution readiness", () => {
+    expect(sharedProjectFileStatus(input)).toEqual({
+      title: "Saved snapshot applied",
+      detail: "The last received snapshot is applied. Execution readiness is checked separately.",
+    });
+    expect(sharedProjectFileStatus({ ...input, receipt: undefined }).title).toBe(
+      "Waiting for first check",
+    );
+    expect(
+      sharedProjectFileStatus({ ...input, receipt: { ...receipt, bindingRevision: 2 } }).title,
+    ).toBe("Preparation needs refresh");
+    expect(
+      sharedProjectFileStatus({ ...input, receipt: { ...receipt, manifestRevision: 1 } }).title,
+    ).toBe("Preparation needs refresh");
+  });
+  it("distinguishes unpublished local edits, retained conflicts and wait failures", () => {
+    expect(
+      sharedProjectFileStatus({ ...input, receipt: { ...receipt, phase: "local-changes" } }).detail,
+    ).toContain("have not been published");
+    expect(
+      sharedProjectFileStatus({
+        ...input,
+        receipt: { ...receipt, phase: "conflict", conflictCount: 1 },
+      }).title,
+    ).toBe("1 conflict to review");
+    expect(
+      sharedProjectFileStatus({
+        ...input,
+        receipt: { ...receipt, phase: "conflict", conflictCount: 3 },
+      }).title,
+    ).toBe("3 conflicts to review");
+    expect(
+      sharedProjectFileStatus({
+        ...input,
+        receipt: { ...receipt, phase: "waiting", error: "Project owner: Active work" },
+      }).detail,
+    ).toBe("Project owner: Active work");
+    expect(
+      sharedProjectFileStatus({
+        ...input,
+        receipt: { ...receipt, phase: "error", error: "Cache full" },
+      }).detail,
+    ).toBe("Cache full");
   });
 });

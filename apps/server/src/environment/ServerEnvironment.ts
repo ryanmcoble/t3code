@@ -227,6 +227,7 @@ export const make = Effect.gen(function* () {
       sharedProjects: 1,
       sharedProjectEnrollment: 1,
       sharedProjectFileContent: 1,
+      sharedProjectFileControls: 1,
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,

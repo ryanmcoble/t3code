@@ -54,6 +54,7 @@ export function SharedProjectsSection({
         <SharedProjectEnrollmentSection
           environmentId={environmentId}
           projects={state.data?.projects ?? []}
+          bindings={state.data?.bindings ?? []}
         />
       ) : null}
       {state.error ? (

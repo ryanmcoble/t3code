@@ -7,6 +7,8 @@ import {
   ProjectFolderEntries,
   SharedProjectContentError,
   PositiveInt,
+  SharedProjectContentReceipt,
+  SharedProjectContentPhase,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -27,7 +29,7 @@ export const RetainedProjectContent = Schema.Struct({
 export const SharedProjectContentRecord = Schema.Struct({
   manifestRevision: PositiveInt,
   bindingRevision: PositiveInt,
-  phase: Schema.Literals(["current", "local-changes", "conflict", "waiting", "error"]),
+  phase: SharedProjectContentPhase,
   sourceHash: Schema.NullOr(Digest),
   sourceObservation: Schema.NullOr(Schema.String),
   localObservation: Schema.NullOr(Schema.String),
@@ -41,6 +43,12 @@ export const SharedProjectContentRecord = Schema.Struct({
     }),
   ),
   error: Schema.NullOr(Schema.String),
+  resolution: Schema.optionalKey(
+    Schema.Struct({ fromGeneration: PositiveInt, choice: Schema.Literals(["local", "owner"]) }),
+  ),
+  localProjectId: Schema.optionalKey(Schema.String),
+  localPath: Schema.optionalKey(Schema.String),
+  localIdentity: Schema.optionalKey(Schema.String),
 });
 export type SharedProjectContentRecord = typeof SharedProjectContentRecord.Type;
 
@@ -68,11 +76,19 @@ export class SharedProjectContentStore extends Context.Service<
     readonly validateRetained: (
       retained: typeof RetainedProjectContent.Type,
     ) => Effect.Effect<void, SharedProjectContentError>;
+    readonly receipts: (
+      projectId: string,
+      rootIds: ReadonlyArray<string>,
+    ) => Effect.Effect<
+      ReadonlyArray<typeof SharedProjectContentReceipt.Type>,
+      SharedProjectContentError
+    >;
   }
 >()("t3/project/SharedProjectContentStore") {}
 
 const encodeRecord = Schema.encodeEffect(Schema.fromJsonString(SharedProjectContentRecord));
 const decodeRecord = Schema.decodeEffect(Schema.fromJsonString(SharedProjectContentRecord));
+const decodeReceipts = Schema.decodeUnknownEffect(Schema.Array(SharedProjectContentReceipt));
 const isContentError = Schema.is(SharedProjectContentError);
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -114,6 +130,21 @@ const make = Effect.gen(function* () {
     return bytes.toString("base64");
   });
   return SharedProjectContentStore.of({
+    receipts: Effect.fn("SharedProjectContentStore.receipts")(
+      function* (projectId, rootIds) {
+        const rows =
+          yield* sql`SELECT project_id AS "sharedProjectId",root_id AS "rootId",generation,
+        json_extract(payload,'$.manifestRevision') AS "manifestRevision",
+        json_extract(payload,'$.bindingRevision') AS "bindingRevision",
+        json_extract(payload,'$.phase') AS phase,
+        json_extract(payload,'$.sourceHash') AS "sourceHash",
+        COALESCE(json_array_length(payload,'$.conflict.paths'),0) AS "conflictCount",
+        json_extract(payload,'$.error') AS error
+        FROM shared_project_content WHERE project_id=${projectId} AND root_id IN ${sql.in(rootIds)} ORDER BY root_id`;
+        return yield* decodeReceipts(rows);
+      },
+      Effect.mapError(() => new SharedProjectContentError({ reason: "storage" })),
+    ),
     read: Effect.fn("SharedProjectContentStore.read")(
       function* (projectId, rootId) {
         const rows = yield* sql<{

@@ -269,7 +269,7 @@ const make = Effect.gen(function* () {
                   if (response.status === 403) return yield* denied();
                   if (response.status === 409) {
                     const failure = yield* response.json.pipe(Effect.flatMap(decodeContentFailure));
-                    return yield* new SharedProjectContentError(failure);
+                    return yield* new SharedProjectContentError({ ...failure, origin: "owner" });
                   }
                   if (response.status !== 200) return yield* unreachable();
                   return yield* response.json.pipe(Effect.flatMap(decodeContentResponse));
