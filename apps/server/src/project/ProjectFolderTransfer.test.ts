@@ -16,7 +16,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 const folderWatches = vi.hoisted(
-  () => new Map<string, { changed: () => void; close: ReturnType<typeof vi.fn> }>(),
+  () =>
+    new Map<string, { changed: (filename?: string) => void; close: ReturnType<typeof vi.fn> }>(),
 );
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs")>();
@@ -25,7 +26,10 @@ vi.mock("node:fs", async (importOriginal) => {
     watch: (root: string, _options: unknown, listener: (event: string, name: string) => void) => {
       const close = vi.fn();
       const watcher = { close, unref: () => {}, on: () => watcher };
-      folderWatches.set(root, { changed: () => listener("change", "nested/file"), close });
+      folderWatches.set(root, {
+        changed: (filename = "nested/file") => listener("change", filename),
+        close,
+      });
       return watcher;
     },
   };
@@ -40,6 +44,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
@@ -63,6 +68,68 @@ const fixture = Effect.gen(function* () {
   yield* Effect.promise(() => NodeFSP.mkdir(source));
   return { root, source, destination, service: yield* ProjectFolderTransfer.ProjectFolderTransfer };
 });
+
+it.effect(
+  "shares content watches with legacy sync, filters excluded changes, and closes only after the final interest",
+  () =>
+    Effect.gen(function* () {
+      const { source, service } = yield* fixture;
+      const cwd = yield* Effect.promise(() => NodeFSP.realpath(source));
+      const contentPolicy = { mode: "project-content" as const, excludePaths: ["private-notes"] };
+      const first = yield* service.observeContent({ cwd, observerId: "member-a", contentPolicy });
+      const second = yield* service.observeContent({ cwd, observerId: "member-b", contentPolicy });
+      const watch = folderWatches.get(cwd)!;
+      expect(first.split(":")[0]).toBe(second.split(":")[0]);
+      yield* service.status({ cwd });
+      expect(folderWatches.get(cwd)).toBe(watch);
+      expect(watch.close).not.toHaveBeenCalled();
+      watch.changed(".git/config");
+      watch.changed("private-notes/draft.md");
+      expect(yield* service.observeContent({ cwd, observerId: "member-a", contentPolicy })).toBe(
+        first,
+      );
+      watch.changed("README.md");
+      expect(
+        yield* service.observeContent({ cwd, observerId: "member-a", contentPolicy }),
+      ).not.toBe(first);
+      expect(
+        yield* service.observeContent({ cwd, observerId: "member-b", contentPolicy }),
+      ).not.toBe(second);
+      yield* service.setSync({
+        cwd,
+        state: {
+          peerEnvironmentId: EnvironmentId.make("legacy-peer"),
+          peerPath: "/peer",
+          baseline: [],
+          automatic: true,
+        },
+      });
+      yield* service.status({ cwd });
+      yield* service.releaseContentObservation({ cwd, observerId: "member-a" });
+      yield* service.releaseContentObservation({ cwd, observerId: "member-b" });
+      expect(watch.close).not.toHaveBeenCalled();
+      yield* service.setSync({ cwd, state: null });
+      expect(watch.close).toHaveBeenCalledOnce();
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("expires abandoned content observers and resets their revision after reacquisition", () =>
+  Effect.gen(function* () {
+    const { source, service } = yield* fixture;
+    const cwd = yield* Effect.promise(() => NodeFSP.realpath(source));
+    const input = {
+      cwd,
+      observerId: "disconnected-member",
+      contentPolicy: { mode: "project-content" as const, excludePaths: [] },
+    };
+    const first = yield* service.observeContent(input);
+    const watch = folderWatches.get(cwd)!;
+    yield* TestClock.adjust("6 minutes");
+    expect(watch.close).toHaveBeenCalledOnce();
+    const next = yield* service.observeContent(input);
+    expect(next).not.toBe(first);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
 
 it.effect(
   "filters project replication before reading excluded trees, and rejects injected excluded entries and baselines",

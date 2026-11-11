@@ -53,6 +53,76 @@ const connect = {
   token: "test-only-credential",
 } as const;
 
+it.effect(
+  "keeps default grants metadata-only and requires separate repository-history access",
+  () => {
+    const test = fixture(owner);
+    return Effect.gen(function* () {
+      const service = yield* Enrollment.SharedProjectEnrollment;
+      const metadata = yield* service.grant({
+        sharedProjectId: manifest.id,
+        destinationEnvironmentId: member,
+        revoke: false,
+      });
+      const request = {
+        projectId: manifest.id,
+        destinationId: member,
+        token: metadata.token!,
+        history: false,
+      };
+      assert.equal((yield* service.authorizeContent(request).pipe(Effect.result))._tag, "Failure");
+      const sql = yield* SqlClient.SqlClient;
+      const rows = yield* sql<{
+        access: string;
+      }>`SELECT access FROM shared_project_grants WHERE destination_id=${member}`;
+      assert.equal(rows[0]?.access, "metadata");
+      const files = yield* service.grant({
+        sharedProjectId: manifest.id,
+        destinationEnvironmentId: member,
+        revoke: false,
+        access: "files",
+      });
+      assert.equal(
+        (yield* service.authorizeContent({ ...request, token: files.token! })).id,
+        manifest.id,
+      );
+      assert.equal(
+        (yield* service
+          .authorizeContent({ ...request, token: files.token!, history: true })
+          .pipe(Effect.result))._tag,
+        "Failure",
+      );
+      const history = yield* service.grant({
+        sharedProjectId: manifest.id,
+        destinationEnvironmentId: member,
+        revoke: false,
+        access: "repository-history",
+      });
+      assert.equal(
+        (yield* service.authorizeContent({ ...request, token: history.token!, history: true })).id,
+        manifest.id,
+      );
+      yield* service.grant({
+        sharedProjectId: manifest.id,
+        destinationEnvironmentId: member,
+        revoke: true,
+      });
+      assert.equal(
+        (yield* service.authorizeContent({ ...request, token: history.token! }).pipe(Effect.result))
+          ._tag,
+        "Failure",
+      );
+    }).pipe(
+      Effect.provide(
+        test.layer.pipe(
+          Layer.provideMerge(Sqlite.layerMemory.pipe(Layer.provideMerge(NodeServices.layer))),
+        ),
+      ),
+      Effect.scoped,
+    );
+  },
+);
+
 const fixture = (environmentId: EnvironmentId) => {
   let current = manifest;
   let advertised = descriptor;

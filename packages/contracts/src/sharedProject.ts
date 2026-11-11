@@ -69,6 +69,7 @@ export const SharedProjectGrantInput = Schema.Struct({
   sharedProjectId: Identifier,
   destinationEnvironmentId: EnvironmentId,
   revoke: Schema.Boolean,
+  access: Schema.optionalKey(Schema.Literals(["metadata", "files", "repository-history"])),
 });
 export const SharedProjectGrantResult = Schema.Struct({ token: Schema.NullOr(Schema.String) });
 export const SharedProjectSubscriptionControl = Schema.Union([

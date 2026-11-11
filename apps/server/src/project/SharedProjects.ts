@@ -30,6 +30,9 @@ export class SharedProjects extends Context.Service<
   {
     readonly state: Effect.Effect<SharedProjectState, SharedProjectError>;
     readonly get: (id: string) => Effect.Effect<SharedProjectManifest, SharedProjectError>;
+    readonly getBinding: (
+      id: string,
+    ) => Effect.Effect<SharedProjectBinding | null, SharedProjectError>;
     readonly publish: (
       input: typeof SharedProjectPublish.Type,
     ) => Effect.Effect<SharedProjectManifest, SharedProjectError>;
@@ -117,6 +120,7 @@ const make = Effect.gen(function* () {
   }).pipe(Effect.mapError(() => new SharedProjectError({ reason: "storage" })));
   return SharedProjects.of({
     state,
+    getBinding: readBinding,
     get: Effect.fn("SharedProjects.get")(function* (id) {
       const manifest = yield* latest(id);
       if (!manifest) return yield* new SharedProjectError({ reason: "not-found" });

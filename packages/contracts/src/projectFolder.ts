@@ -69,12 +69,15 @@ export class ProjectFolderTransferError extends Schema.TaggedError<ProjectFolder
       "invalid_chunk",
       "incomplete",
       "io",
+      "observation_limit",
     ]),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     switch (this.reason) {
+      case "observation_limit":
+        return "Too many folders are being watched. Pause unused shared projects and retry.";
       case "invalid_path":
         return "A folder entry points outside the copied folder or has an unsupported name.";
       case "unsupported_entry":

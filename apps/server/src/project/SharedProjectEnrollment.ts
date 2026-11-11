@@ -40,6 +40,12 @@ export class SharedProjectEnrollment extends Context.Service<
       destinationId: string,
       token: string,
     ) => Effect.Effect<SharedProjectManifest, SharedProjectError>;
+    readonly authorizeContent: (input: {
+      readonly projectId: string;
+      readonly destinationId: string;
+      readonly token: string;
+      readonly history: boolean;
+    }) => Effect.Effect<SharedProjectManifest, SharedProjectError>;
     readonly command: (
       input: typeof SharedProjectEnrollmentCommand.Type,
     ) => Effect.Effect<void, SharedProjectError>;
@@ -91,6 +97,30 @@ const make = Effect.gen(function* () {
     const project = yield* projects.get(id);
     if (project.ownerEnvironmentId !== environmentId)
       return yield* new SharedProjectError({ reason: "owner" });
+    return project;
+  });
+  const authorize = Effect.fn("SharedProjectEnrollment.authorize")(function* (
+    id: string,
+    destinationId: string,
+    token: string,
+    required: "metadata" | "files" | "repository-history",
+  ) {
+    if (!token || token.length > 256) return yield* denied();
+    const hash = yield* digest(token);
+    const rows = yield* sql<{
+      readonly access: string;
+    }>`SELECT access FROM shared_project_grants WHERE project_id=${id} AND destination_id=${destinationId} AND token_hash=${hash}`.pipe(
+      Effect.mapError(storage),
+    );
+    const access = rows[0]?.access;
+    if (
+      !access ||
+      (required === "files" && access === "metadata") ||
+      (required === "repository-history" && access !== "repository-history")
+    )
+      return yield* denied();
+    const project = yield* owned(id);
+    if (!project.members.some((id) => id === destinationId)) return yield* denied();
     return project;
   });
   const origin = (sourceUrl: string) =>
@@ -220,25 +250,24 @@ const make = Effect.gen(function* () {
             Effect.mapError(storage),
           );
           const hash = yield* digest(token);
-          yield* sql`INSERT INTO shared_project_grants(project_id,destination_id,token_hash) VALUES(${project.id},${input.destinationEnvironmentId},${hash}) ON CONFLICT(project_id,destination_id) DO UPDATE SET token_hash=excluded.token_hash`.pipe(
+          yield* sql`INSERT INTO shared_project_grants(project_id,destination_id,token_hash,access) VALUES(${project.id},${input.destinationEnvironmentId},${hash},${input.access ?? "metadata"}) ON CONFLICT(project_id,destination_id) DO UPDATE SET token_hash=excluded.token_hash,access=excluded.access`.pipe(
             Effect.mapError(storage),
           );
           return { token };
         }),
       ),
     ),
-    serve: Effect.fn("SharedProjectEnrollment.serve")(function* (id, destinationId, token) {
-      if (!token || token.length > 256) return yield* denied();
-      const hash = yield* digest(token);
-      const rows =
-        yield* sql`SELECT project_id FROM shared_project_grants WHERE project_id=${id} AND destination_id=${destinationId} AND token_hash=${hash}`.pipe(
-          Effect.mapError(storage),
-        );
-      if (!rows.length) return yield* denied();
-      const project = yield* owned(id);
-      if (!project.members.some((id) => id === destinationId)) return yield* denied();
-      return project;
-    }),
+    serve: Effect.fn("SharedProjectEnrollment.serve")((id, destinationId, token) =>
+      authorize(id, destinationId, token, "metadata"),
+    ),
+    authorizeContent: Effect.fn("SharedProjectEnrollment.authorizeContent")((input) =>
+      authorize(
+        input.projectId,
+        input.destinationId,
+        input.token,
+        input.history ? "repository-history" : "files",
+      ),
+    ),
     command: Effect.fn("SharedProjectEnrollment.command")((input) =>
       gate.withPermits(1)(
         Effect.gen(function* () {

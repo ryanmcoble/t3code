@@ -87,6 +87,7 @@ import Migration0079 from "./Migrations/079_ContainerStackLinks.ts";
 import Migration0080 from "./Migrations/080_ExecutionResources.ts";
 import Migration0081 from "./Migrations/081_SharedProjects.ts";
 import Migration0082 from "./Migrations/082_SharedProjectEnrollment.ts";
+import Migration0083 from "./Migrations/083_SharedProjectContentGrants.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -172,6 +173,7 @@ const migrationEntries = [
   [80, "ExecutionResources", Migration0080],
   [81, "SharedProjects", Migration0081],
   [82, "SharedProjectEnrollment", Migration0082],
+  [83, "SharedProjectContentGrants", Migration0083],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

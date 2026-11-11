@@ -25,6 +25,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Clock from "effect/Clock";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Path from "effect/Path";
 
@@ -52,6 +53,15 @@ export class ProjectFolderTransfer extends Context.Service<
     readonly status: (input: {
       cwd: string;
     }) => Effect.Effect<ProjectFolderStatusResult, ProjectFolderTransferError>;
+    readonly observeContent: (input: {
+      readonly cwd: string;
+      readonly observerId: string;
+      readonly contentPolicy: ProjectFolderContentPolicy;
+    }) => Effect.Effect<string, ProjectFolderTransferError>;
+    readonly releaseContentObservation: (input: {
+      readonly cwd: string;
+      readonly observerId: string;
+    }) => Effect.Effect<void, ProjectFolderTransferError>;
     readonly getSync: (input: {
       cwd: string;
     }) => Effect.Effect<ProjectFolderSyncState | null, ProjectFolderTransferError>;
@@ -97,7 +107,23 @@ const make = Effect.gen(function* () {
   const sessions = new Map<string, Transfer>();
   const watchers = new Map<
     string,
-    { identity: string; token: string; revision: number; watcher: NodeFS.FSWatcher }
+    {
+      identity: string;
+      token: string;
+      revision: number;
+      watcher: NodeFS.FSWatcher;
+      legacy: boolean;
+      shared: Map<
+        string,
+        {
+          policy: string;
+          token: string;
+          revision: number;
+          until: number;
+          include: (path: string) => boolean;
+        }
+      >;
+    }
   >();
   const hashCaches = new Map<string, Map<string, { signature: string; hash: string }>>();
   yield* Effect.addFinalizer(() =>
@@ -106,25 +132,56 @@ const make = Effect.gen(function* () {
       watchers.clear();
     }),
   );
-  const closeWatcher = (root: string) => {
-    watchers.get(root)?.watcher.close();
+  const closeWatcher = (root: string, force = false) => {
+    const current = watchers.get(root);
+    if (current && !force) {
+      current.legacy = false;
+      for (const [id, observer] of current.shared)
+        if (observer.until <= clock.currentTimeMillisUnsafe()) current.shared.delete(id);
+      if (current.shared.size) return;
+    }
+    current?.watcher.close();
     watchers.delete(root);
   };
-  const watchRevision = (root: string, identity: string) => {
+  const watchRevision = (root: string, identity: string, legacy = true) => {
     let current = watchers.get(root);
     if (current?.identity !== identity) {
-      closeWatcher(root);
-      const watcher = NodeFS.watch(root, { recursive: true }, () => {
+      closeWatcher(root, true);
+      const watcher = NodeFS.watch(root, { recursive: true }, (_event, filename) => {
         const entry = watchers.get(root);
-        if (entry) entry.revision++;
+        if (!entry) return;
+        entry.revision++;
+        const relative = filename?.toString().replace(/\\/g, "/");
+        for (const observer of entry.shared.values())
+          if (!relative || observer.include(relative)) observer.revision++;
       });
-      current = { identity, token: NodeCrypto.randomUUID(), revision: 0, watcher };
+      current = {
+        identity,
+        token: NodeCrypto.randomUUID(),
+        revision: 0,
+        watcher,
+        legacy: false,
+        shared: new Map(),
+      };
       watchers.set(root, current);
-      watcher.on("error", () => closeWatcher(root));
+      watcher.on("error", () => closeWatcher(root, true));
       watcher.unref();
     }
+    if (legacy) current.legacy = true;
     return `${current.token}:${current.revision}`;
   };
+  const pruneObservers = () => {
+    const now = clock.currentTimeMillisUnsafe();
+    for (const [root, current] of watchers) {
+      for (const [id, observer] of current.shared)
+        if (observer.until <= now) current.shared.delete(id);
+      if (!current.legacy && current.shared.size === 0) closeWatcher(root, true);
+    }
+  };
+  yield* Effect.sync(pruneObservers).pipe(
+    Effect.repeat(Schedule.spaced("30 seconds")),
+    Effect.forkScoped,
+  );
 
   const io = <A>(operation: () => Promise<A>) =>
     Effect.tryPromise({
@@ -527,6 +584,47 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const observeContent: ProjectFolderTransfer["Service"]["observeContent"] = Effect.fn(
+    "ProjectFolderTransfer.observeContent",
+  )(function* (input) {
+    yield* knownWorkspaces
+      .assertContains(input.cwd)
+      .pipe(
+        Effect.mapError(
+          (cause) => new ProjectFolderTransferError({ reason: "invalid_path", cause }),
+        ),
+      );
+    return yield* io(async () => {
+      if (!input.observerId || input.observerId.length > 512) fail("invalid_session");
+      const include = compileProjectContentPolicy(input.contentPolicy) ?? fail("invalid_path");
+      pruneObservers();
+      const root = await NodeFSP.realpath(expandHomePath(input.cwd, home));
+      const stat = await NodeFSP.stat(root);
+      if (!stat.isDirectory()) fail("invalid_path");
+      if (!watchers.has(root) && watchers.size >= 128) fail("observation_limit");
+      watchRevision(root, `${stat.dev}:${stat.ino}`, false);
+      const current = watchers.get(root)!;
+      const policy = JSON.stringify(input.contentPolicy);
+      let observer = current.shared.get(input.observerId);
+      if (!observer || observer.policy !== policy) {
+        observer = { policy, token: NodeCrypto.randomUUID(), revision: 0, until: 0, include };
+        current.shared.set(input.observerId, observer);
+      }
+      observer.until = clock.currentTimeMillisUnsafe() + 5 * 60_000;
+      return `${current.token}:${observer.token}:${observer.revision}`;
+    });
+  });
+  const releaseContentObservation: ProjectFolderTransfer["Service"]["releaseContentObservation"] =
+    Effect.fn("ProjectFolderTransfer.releaseContentObservation")((input) =>
+      io(async () => {
+        const absolute = path.resolve(expandHomePath(input.cwd, home));
+        const root = await NodeFSP.realpath(absolute).catch(() => absolute);
+        const current = watchers.get(root);
+        current?.shared.delete(input.observerId);
+        if (current && !current.legacy && current.shared.size === 0) closeWatcher(root, true);
+      }),
+    );
+
   const importFolder: ProjectFolderTransfer["Service"]["importFolder"] = Effect.fn(
     "ProjectFolderTransfer.importFolder",
   )(function* (input) {
@@ -821,6 +919,8 @@ const make = Effect.gen(function* () {
     getSync,
     setSync,
     exportFolder,
+    observeContent,
+    releaseContentObservation,
     importFolder,
     read,
     write,
