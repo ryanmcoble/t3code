@@ -1,7 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
-import { associateContainer, parseDockerMemory, partitionContainers } from "./DockerModel.ts";
+import {
+  associateContainer,
+  composeStackKey,
+  parseDockerMemory,
+  partitionContainers,
+} from "./DockerModel.ts";
 
 describe("Docker inventory interpretation", () => {
+  it("requires a proven Compose configuration set and preserves its identity across ordering changes", () => {
+    expect(composeStackKey("api", [])).toBeNull();
+    expect(composeStackKey(null, ["/repo/compose.yaml"])).toBeNull();
+    expect(composeStackKey("api", ["relative.yaml"])).toBeNull();
+    expect(composeStackKey("api", ["/repo/a.yaml", "/repo/b.yaml"])).toBe(
+      composeStackKey("api", ["/repo/b.yaml", "/repo/a.yaml"]),
+    );
+    expect(composeStackKey("api", ["/repo/a.yaml"])).not.toBe(
+      composeStackKey("api", ["/other/a.yaml"]),
+    );
+  });
   it("keeps missing metrics unknown and uses Docker binary memory units", () => {
     expect(parseDockerMemory("12.5MiB / 8GiB")).toBe(13_107_200);
     expect(parseDockerMemory("1.5GB / 16GB")).toBe(1_500_000_000);

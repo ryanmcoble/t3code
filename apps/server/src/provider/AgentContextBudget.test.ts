@@ -1,3 +1,4 @@
+import { ContainerMonitor } from "../containers/ContainerMonitor.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { SharedMemory } from "../memory/SharedMemory.ts";
 import { ComputerUse } from "../computer/ComputerUse.ts";
@@ -51,6 +52,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(SharedMemory)({}),
   Layer.mock(ProjectStoreV2)({}),
   Layer.mock(ComputerUse)({}),
+  Layer.mock(ContainerMonitor)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
   Layer.mock(GitVcsDriver)({}),

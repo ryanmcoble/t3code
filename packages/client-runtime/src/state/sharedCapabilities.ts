@@ -1,3 +1,12 @@
+export {
+  groupContainers,
+  containerRuleAvailability,
+  resolveContainerFolders,
+  containerCountLabel,
+  containerPanelSummary,
+  containerMetricsLabel,
+  type ContainerFilter,
+} from "../containerPresentation.ts";
 export { memoryRulesFromDraft, memoryRulesDraftError } from "../memoryRules.ts";
 import {
   WS_METHODS,
@@ -102,6 +111,7 @@ export function createSharedCapabilityAtoms<R, E>(
     }),
     containerLogs: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "containers:logs",
+      idleTtlMs: 0,
       tag: WS_METHODS.containersLogs,
       staleTimeMs: 0,
     }),

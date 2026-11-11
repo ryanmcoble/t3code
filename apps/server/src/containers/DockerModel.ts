@@ -64,6 +64,21 @@ function inside(root: string, path: string): boolean {
   return path === root || path.startsWith(root.endsWith("/") ? root : `${root}/`);
 }
 
+export function composeStackKey(
+  project: string | null,
+  files: ReadonlyArray<string>,
+): string | null {
+  if (
+    !project ||
+    !files.length ||
+    files.length > 64 ||
+    files.some((file) => !file.startsWith("/") || file.length > 4096)
+  )
+    return null;
+  const key = JSON.stringify([project, [...new Set(files)].sort()]);
+  return key.length <= 8192 ? key : null;
+}
+
 /** Visibility links are evidence of a relationship, never ownership or permission to clean up. */
 export function associateContainer(
   container: {

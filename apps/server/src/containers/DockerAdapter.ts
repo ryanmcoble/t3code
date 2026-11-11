@@ -151,6 +151,11 @@ function containerFromInspect(value: typeof Inspect.Type): ContainerRecord {
           .map((path) => path.trim()),
       ),
     ],
+    composeConfigFiles:
+      value.configFiles
+        ?.split(",")
+        .map((file) => file.trim())
+        .filter(Boolean) ?? [],
     bindSources: value.mounts.filter((mount) => mount.Type === "bind").map((mount) => mount.Source),
     ports,
     cpuPercent: null,

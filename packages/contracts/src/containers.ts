@@ -5,6 +5,8 @@ export const ContainerId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/
 export const ContainerAssociation = Schema.Struct({
   folder: TrimmedNonEmptyString,
   source: Schema.Literals(["manual", "compose", "mount"]),
+  ruleId: Schema.optionalKey(Schema.String),
+  scope: Schema.optionalKey(Schema.Literals(["container", "stack"])),
 });
 export type ContainerAssociation = typeof ContainerAssociation.Type;
 export const ContainerPort = Schema.Struct({
@@ -26,6 +28,8 @@ export const ContainerRecord = Schema.Struct({
   composeProject: Schema.NullOr(Schema.String),
   composeService: Schema.NullOr(Schema.String),
   composePaths: Schema.Array(Schema.String),
+  composeConfigFiles: Schema.optionalKey(Schema.Array(Schema.String)),
+  stackKey: Schema.optionalKey(Schema.NullOr(Schema.String)),
   bindSources: Schema.Array(Schema.String),
   ports: Schema.Array(ContainerPort),
   cpuPercent: Schema.NullOr(Schema.Number),
@@ -44,6 +48,16 @@ export const ContainerCounts = Schema.Struct({
   unhealthy: NonNegativeInt,
 });
 export type ContainerCounts = typeof ContainerCounts.Type;
+export const ContainerFolderRule = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  engineId: Schema.String,
+  containerId: ContainerId,
+  folder: Schema.String,
+  rule: Schema.Literals(["include", "exclude"]),
+  stackKey: Schema.NullOr(Schema.String),
+});
+export type ContainerFolderRule = typeof ContainerFolderRule.Type;
 export const ContainerSnapshot = Schema.Struct({
   sampledAt: NonNegativeInt,
   engineId: Schema.NullOr(Schema.String),
@@ -62,6 +76,10 @@ export const ContainerSnapshot = Schema.Struct({
   stale: Schema.Boolean,
   containers: Schema.Array(ContainerRecord),
   counts: ContainerCounts,
+  folderAliases: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ path: Schema.String, canonicalPath: Schema.String })),
+  ),
+  associationRules: Schema.optionalKey(Schema.Array(ContainerFolderRule)),
 });
 export type ContainerSnapshot = typeof ContainerSnapshot.Type;
 export const ContainerTarget = Schema.Struct({
@@ -80,6 +98,8 @@ export const ContainerAssociationCommand = Schema.Struct({
   ...ContainerTarget.fields,
   folder: TrimmedNonEmptyString,
   operation: Schema.Literals(["include", "exclude", "remove"]),
+  scope: Schema.optionalKey(Schema.Literals(["container", "stack"])),
+  ruleId: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(16384))),
 });
 export class ContainerError extends Schema.TaggedError<ContainerError>()("ContainerError", {
   reason: Schema.Literals([
@@ -89,6 +109,7 @@ export class ContainerError extends Schema.TaggedError<ContainerError>()("Contai
     "not-found",
     "engine-changed",
     "storage",
+    "unproven-stack",
   ]),
 }) {
   override get message(): string {
@@ -105,6 +126,8 @@ export class ContainerError extends Schema.TaggedError<ContainerError>()("Contai
         return "The selected Docker engine changed. Refresh before continuing.";
       case "storage":
         return "Container associations could not be saved or read.";
+      case "unproven-stack":
+        return "This container does not identify a Compose project and configuration-file set. Link the individual container instead.";
     }
   }
 }

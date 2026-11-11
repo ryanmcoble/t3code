@@ -1,3 +1,5 @@
+import { ContainerToolkit } from "./toolkits/containers/tools.ts";
+import * as ContainerHandlers from "./toolkits/containers/handlers.ts";
 import * as ComputerUse from "../computer/ComputerUse.ts";
 import {
   ComputerStandardToolkit,
@@ -1175,8 +1177,11 @@ export const layerMcpTransport = McpServer.layerHttp({
   allowSessionTermination: true,
 }).pipe(Layer.provide(layerMcpAuthMiddleware));
 
+export const layerContainerToolkit = toolkitRegistration(ContainerToolkit, ContainerHandlers.layer);
+
 /** Every tool the T3 MCP server advertises. AgentContextBudget.test.ts measures this set. */
 export const layerTools = Layer.mergeAll(
+  layerContainerToolkit,
   toolkitRegistration(ComputerStandardToolkit, ComputerHandlers.layerStandard),
   imageToolRegistration(registerComputerObservation(), ComputerHandlers.layerObserve),
   toolkitRegistration(MemoryToolkit, MemoryHandlers.layer),

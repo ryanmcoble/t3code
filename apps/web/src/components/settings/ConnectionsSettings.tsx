@@ -1,3 +1,4 @@
+import { ContainerDisclosure } from "../containers/ContainerPanel";
 import { EnvironmentSetupSettings } from "./EnvironmentSetupSettings";
 import { SessionPermissions } from "./SessionPermissions";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
@@ -1535,6 +1536,15 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
           isSearchTarget={index === 0}
         />
       ))}
+      <SettingsSection title="Containers">
+        {loadBalancingEnvironments.map((environment) => (
+          <ContainerDisclosure
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            label={environment.label}
+          />
+        ))}
+      </SettingsSection>
       <EnvironmentSetupSettings environments={loadBalancingEnvironments} />
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <PullRequestRoutingSettings environments={loadBalancingEnvironments} />

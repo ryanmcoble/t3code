@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import type { ContainerRecord } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -59,6 +61,12 @@ it.effect("shares one live collector and stops after the final subscriber releas
         yield* Scope.close(secondScope, Exit.void);
         yield* TestClock.adjust("15 seconds");
         assert.equal(yield* Ref.get(samples), 2);
+        const reopenedScope = yield* Scope.make();
+        const reopened = yield* monitor.subscribe.pipe(
+          Effect.provideService(Scope.Scope, reopenedScope),
+        );
+        assert.isTrue(reopened.latest.stale);
+        yield* Scope.close(reopenedScope, Exit.void);
       }),
       {
         inventory: Ref.update(samples, (value) => value + 1).pipe(
@@ -74,6 +82,94 @@ it.effect("shares one live collector and stops after the final subscriber releas
       },
     );
   }),
+);
+
+it.effect(
+  "keeps stack links across recreation, permits exact exceptions and removes orphan rules",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const temporary = yield* fs.makeTempDirectoryScoped();
+      const folder = yield* fs.realPath(temporary);
+      const original: ContainerRecord = {
+        id: "a".repeat(64),
+        name: "api-old",
+        image: "api:local",
+        state: "running",
+        available: true,
+        health: null,
+        restartCount: 0,
+        startedAt: null,
+        finishedAt: null,
+        composeProject: "api",
+        composeService: "web",
+        composePaths: [],
+        composeConfigFiles: [`${folder}/compose.yaml`],
+        bindSources: [],
+        ports: [],
+        cpuPercent: null,
+        memoryBytes: null,
+        associations: [],
+      };
+      const containers = yield* Ref.make<ReadonlyArray<ContainerRecord>>([original]);
+      yield* withMonitor(
+        Effect.gen(function* () {
+          const monitor = yield* ContainerMonitor.ContainerMonitor;
+          yield* monitor.associate({
+            engineId: "engine-a",
+            containerId: original.id,
+            folder,
+            operation: "include",
+            scope: "stack",
+          });
+          const linked = yield* monitor.refresh;
+          assert.equal(linked.associationRules?.length, 1);
+          assert.equal(linked.containers[0]?.associations[0]?.scope, "stack");
+          const replacement = { ...original, id: "b".repeat(64), name: "api-new" };
+          yield* Ref.set(containers, [replacement]);
+          assert.equal((yield* monitor.refresh).containers[0]?.associations[0]?.folder, folder);
+          yield* monitor.associate({
+            engineId: "engine-a",
+            containerId: replacement.id,
+            folder,
+            operation: "exclude",
+          });
+          const excluded = yield* monitor.refresh;
+          assert.equal(excluded.containers[0]?.associations.length, 0);
+          assert.equal(excluded.associationRules?.length, 2);
+          yield* monitor.associate({
+            engineId: "engine-a",
+            containerId: replacement.id,
+            folder,
+            operation: "remove",
+          });
+          assert.equal((yield* monitor.refresh).containers[0]?.associations[0]?.scope, "stack");
+          yield* Ref.set(containers, []);
+          const removed = yield* monitor.refresh;
+          assert.equal(removed.associationRules?.length, 1);
+          yield* monitor.associate({
+            engineId: "engine-a",
+            containerId: original.id,
+            folder,
+            operation: "remove",
+            ruleId: removed.associationRules![0]!.id,
+          });
+          assert.equal((yield* monitor.refresh).associationRules?.length, 0);
+        }),
+        {
+          inventory: Ref.get(containers).pipe(
+            Effect.map((items) => ({
+              engineId: "engine-a",
+              engineName: "Local",
+              complete: true,
+              containers: items,
+              message: "Current",
+            })),
+          ),
+          logs: () => Effect.succeed({ text: "", truncated: false }),
+        },
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("cancels an in-flight collection when the final view closes", () =>

@@ -1,6 +1,7 @@
 import {
   ContainerError,
   type ContainerAssociationCommand,
+  type ContainerFolderRule,
   type ContainerLogsInput,
   type ContainerRecord,
   type ContainerSnapshot,
@@ -23,7 +24,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 import * as DockerAdapter from "./DockerAdapter.ts";
-import { associateContainer, partitionContainers } from "./DockerModel.ts";
+import { associateContainer, composeStackKey, partitionContainers } from "./DockerModel.ts";
 
 export class ContainerMonitor extends Context.Service<
   ContainerMonitor,
@@ -88,13 +89,12 @@ const make = Effect.gen(function* () {
     }>`SELECT DISTINCT json_extract(payload_json,'$.worktreePath') AS folder FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL AND json_extract(payload_json,'$.worktreePath') IS NOT NULL`.pipe(
       NodeSqliteClient.readOnly,
     );
-    const links = yield* sql<{
-      readonly containerId: string;
-      readonly folder: string;
-      readonly rule: "include" | "exclude";
-    }>`SELECT container_id AS "containerId",folder,rule FROM container_associations WHERE engine_id=${engineId}`.pipe(
-      NodeSqliteClient.readOnly,
-    );
+    const storedLinks =
+      yield* sql<ContainerFolderRule>`SELECT target_key AS id,label,engine_id AS "engineId",container_id AS "containerId",folder,rule,stack_key AS "stackKey" FROM container_associations ORDER BY engine_id,target_key,folder LIMIT 1001`.pipe(
+        NodeSqliteClient.readOnly,
+      );
+    const associationRules = storedLinks.slice(0, 1000);
+    const links = associationRules.filter((link) => link.engineId === engineId);
     const resolved = new Map<string, string | null>();
     const normalize = Effect.fnUntraced(function* (value: string) {
       if (!path.isAbsolute(value)) return null;
@@ -109,18 +109,18 @@ const make = Effect.gen(function* () {
       resolved.set(value, root);
       return root;
     });
+    const rawRoots = [
+      ...projectShells.map((project) => project.workspaceRoot),
+      ...threadRoots.map((entry) => entry.folder),
+    ];
     const roots = [
       ...new Set(
-        (yield* Effect.forEach(
-          [
-            ...projectShells.map((project) => project.workspaceRoot),
-            ...threadRoots.map((entry) => entry.folder),
-          ],
-          normalize,
-        )).filter((root): root is string => root !== null),
+        (yield* Effect.forEach(rawRoots, normalize)).filter(
+          (root): root is string => root !== null,
+        ),
       ),
     ];
-    return yield* Effect.forEach(containers, (container) =>
+    const decorated = yield* Effect.forEach(containers, (container) =>
       Effect.gen(function* () {
         const composePaths = (yield* Effect.forEach(container.composePaths, normalize)).filter(
           (entry): entry is string => entry !== null,
@@ -128,18 +128,54 @@ const make = Effect.gen(function* () {
         const bindSources = (yield* Effect.forEach(container.bindSources, normalize)).filter(
           (entry): entry is string => entry !== null,
         );
-        const matching = links.filter((link) => link.containerId === container.id);
+        const sourceFiles = container.composeConfigFiles ?? [];
+        const files = (yield* Effect.forEach(sourceFiles, normalize)).filter(
+          (entry): entry is string => entry !== null,
+        );
+        const stackKey =
+          files.length === sourceFiles.length
+            ? composeStackKey(container.composeProject, files)
+            : null;
+        // Per-container exceptions override a broader manual stack link for the same folder.
+        const matching = new Map<string, ContainerFolderRule>();
+        for (const link of links.filter((link) => stackKey !== null && link.stackKey === stackKey))
+          matching.set(link.folder, link);
+        for (const link of links.filter(
+          (link) => link.stackKey === null && link.containerId === container.id,
+        ))
+          matching.set(link.folder, link);
+        const effective = Array.from(matching.values());
         return {
           ...container,
+          stackKey,
           associations: associateContainer(
             { composePaths, bindSources },
             roots,
-            matching.filter((link) => link.rule === "include").map((link) => link.folder),
-            matching.filter((link) => link.rule === "exclude").map((link) => link.folder),
-          ),
+            effective.filter((link) => link.rule === "include").map((link) => link.folder),
+            effective.filter((link) => link.rule === "exclude").map((link) => link.folder),
+          ).map((link) => {
+            const rule = matching.get(link.folder);
+            return link.source === "manual" && rule
+              ? {
+                  ...link,
+                  ruleId: rule.id,
+                  scope: rule.stackKey ? ("stack" as const) : ("container" as const),
+                }
+              : link;
+          }),
         };
       }),
     );
+    const folderAliases = rawRoots.flatMap((value) => {
+      const canonicalPath = resolved.get(value);
+      return canonicalPath ? [{ path: value, canonicalPath }] : [];
+    });
+    return {
+      containers: decorated,
+      folderAliases,
+      associationRules,
+      linksComplete: storedLinks.length <= 1000,
+    };
   });
 
   const publish = (snapshot: ContainerSnapshot) =>
@@ -163,18 +199,24 @@ const make = Effect.gen(function* () {
       const decorated = yield* decorate(inventory.engineId, inventory.containers).pipe(
         Effect.result,
       );
-      const containers = decorated._tag === "Success" ? decorated.success : inventory.containers;
-      const complete = inventory.complete && decorated._tag === "Success";
+      const containers =
+        decorated._tag === "Success" ? decorated.success.containers : inventory.containers;
+      const complete =
+        inventory.complete && decorated._tag === "Success" && decorated.success.linksComplete;
       return yield* publish({
         ...inventory,
         containers,
+        folderAliases: decorated._tag === "Success" ? decorated.success.folderAliases : [],
+        associationRules: decorated._tag === "Success" ? decorated.success.associationRules : [],
         complete,
         stale: false,
         status: complete ? "ready" : "partial",
         message:
           decorated._tag === "Failure"
             ? "Inventory is current, but folder associations could not be loaded."
-            : inventory.message,
+            : !decorated.success.linksComplete
+              ? "Partial folder rules: only the first 1000 saved associations were loaded."
+              : inventory.message,
         sampledAt: yield* Clock.currentTimeMillis,
         counts: partitionContainers(containers),
       });
@@ -225,18 +267,35 @@ const make = Effect.gen(function* () {
     refresh,
     subscribe: subscribeBeforeSnapshot(
       updates,
-      Effect.acquireRelease(acquireLive, () => releaseLive).pipe(Effect.andThen(Ref.get(cached))),
+      Effect.acquireRelease(acquireLive, () => releaseLive).pipe(
+        Effect.andThen(
+          Effect.gen(function* () {
+            const snapshot = yield* Ref.get(cached);
+            return (yield* Clock.currentTimeMillis) - snapshot.sampledAt >= 15_000
+              ? { ...snapshot, stale: true }
+              : snapshot;
+          }),
+        ),
+      ),
       gate,
     ),
     logs: Effect.fn("ContainerMonitor.logs")((input) => adapter.logs(input, input.lines)),
     associate: Effect.fn("ContainerMonitor.associate")(function* (input) {
+      let stackKey: string | null = null;
+      let label = "";
       if (input.operation !== "remove") {
         const snapshot = yield* refresh;
         if (snapshot.stale) return yield* new ContainerError({ reason: "unavailable" });
         if (snapshot.engineId !== input.engineId)
           return yield* new ContainerError({ reason: "engine-changed" });
-        if (!snapshot.containers.some((container) => container.id === input.containerId))
-          return yield* new ContainerError({ reason: "not-found" });
+        const container = snapshot.containers.find((entry) => entry.id === input.containerId);
+        if (!container) return yield* new ContainerError({ reason: "not-found" });
+        label = container.name;
+        if (input.scope === "stack") {
+          label = container.composeProject ?? container.name;
+          stackKey = container.stackKey ?? null;
+          if (!stackKey) return yield* new ContainerError({ reason: "unproven-stack" });
+        }
         yield* workspaces
           .assertContains(input.folder)
           .pipe(Effect.mapError(() => new ContainerError({ reason: "permission-denied" })));
@@ -247,17 +306,28 @@ const make = Effect.gen(function* () {
           : yield* fs
               .realPath(input.folder)
               .pipe(Effect.mapError(() => new ContainerError({ reason: "unavailable" })));
+      const targetKey =
+        input.operation === "remove" && input.ruleId
+          ? input.ruleId
+          : stackKey
+            ? `stack:${stackKey}`
+            : `container:${input.containerId}`;
       yield* gate
         .withPermits(1)(
           Effect.gen(function* () {
             if (input.operation === "remove")
-              yield* sql`DELETE FROM container_associations WHERE engine_id=${input.engineId} AND container_id=${input.containerId} AND folder=${folder}`;
+              yield* sql`DELETE FROM container_associations WHERE engine_id=${input.engineId} AND target_key=${targetKey} AND folder=${folder}`;
             else
-              yield* sql`INSERT INTO container_associations(engine_id,container_id,folder,rule) VALUES(${input.engineId},${input.containerId},${folder},${input.operation}) ON CONFLICT(engine_id,container_id,folder) DO UPDATE SET rule=excluded.rule`;
+              yield* sql`INSERT INTO container_associations(engine_id,target_key,label,container_id,folder,rule,stack_key) VALUES(${input.engineId},${targetKey},${label},${input.containerId},${folder},${input.operation},${stackKey}) ON CONFLICT(engine_id,target_key,folder) DO UPDATE SET rule=excluded.rule,stack_key=excluded.stack_key,container_id=excluded.container_id,label=excluded.label`;
             const snapshot = yield* Ref.get(cached);
             if (snapshot.engineId) {
-              const containers = yield* decorate(snapshot.engineId, snapshot.containers);
-              yield* publish({ ...snapshot, containers });
+              const decorated = yield* decorate(snapshot.engineId, snapshot.containers);
+              yield* publish({
+                ...snapshot,
+                containers: decorated.containers,
+                folderAliases: decorated.folderAliases,
+                associationRules: decorated.associationRules,
+              });
             }
           }),
         )
