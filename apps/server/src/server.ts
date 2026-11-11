@@ -1,5 +1,7 @@
 import * as ProjectStoreV2 from "./orchestration-v2/ProjectStore.ts";
 import * as MemoryTurnObserver from "./memory/MemoryTurnObserver.ts";
+import * as ContainerMonitor from "./containers/ContainerMonitor.ts";
+import * as DockerAdapter from "./containers/DockerAdapter.ts";
 import * as ComputerUse from "./computer/ComputerUse.ts";
 import * as ComputerDriver from "./computer/ComputerDriver.ts";
 import * as SharedMemory from "./memory/SharedMemory.ts";
@@ -717,6 +719,14 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
           }),
         ),
       ),
+    ),
+  ),
+  Layer.provideMerge(
+    ContainerMonitor.layer.pipe(
+      Layer.provide(DockerAdapter.layer.pipe(Layer.provide(ProcessRunner.layer))),
+      Layer.provide(layerKnownWorkspaces),
+      Layer.provide(ProjectStore.layer),
+      Layer.provide(layerServerSettings),
     ),
   ),
   Layer.provideMerge(layerWorkspace),

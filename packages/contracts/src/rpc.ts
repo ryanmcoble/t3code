@@ -1,3 +1,10 @@
+import {
+  ContainerSnapshot,
+  ContainerLogsInput,
+  ContainerLogsResult,
+  ContainerAssociationCommand,
+  ContainerError,
+} from "./containers.ts";
 import { ComputerUseState, ComputerUseCommand, ComputerUseError } from "./computerUse.ts";
 import {
   MemoryState,
@@ -557,6 +564,10 @@ export const WS_METHODS = {
   setupProfilesCommand: "setupProfiles.command",
   setupProfilesImport: "setupProfiles.import",
   setupProfilesGrant: "setupProfiles.grant",
+  containersSubscribe: "containers.subscribe",
+  containersSnapshot: "containers.snapshot",
+  containersLogs: "containers.logs",
+  containersAssociate: "containers.associate",
   computerUseState: "computerUse.state",
   computerUseCommand: "computerUse.command",
   memoryState: "memory.state",
@@ -856,6 +867,27 @@ const WsSetupProfilesStateRpc = Rpc.make(WS_METHODS.setupProfilesState, {
   payload: Schema.Struct({}),
   success: SetupProfileState,
   error: Schema.Union([SetupProfileError, EnvironmentAuthorizationError]),
+});
+const WsContainersSubscribeRpc = Rpc.make(WS_METHODS.containersSubscribe, {
+  payload: Schema.Struct({}),
+  success: ContainerSnapshot,
+  stream: true,
+  error: EnvironmentAuthorizationError,
+});
+const WsContainersSnapshotRpc = Rpc.make(WS_METHODS.containersSnapshot, {
+  payload: Schema.Struct({}),
+  success: ContainerSnapshot,
+  error: EnvironmentAuthorizationError,
+});
+const WsContainersLogsRpc = Rpc.make(WS_METHODS.containersLogs, {
+  payload: ContainerLogsInput,
+  success: ContainerLogsResult,
+  error: Schema.Union([ContainerError, EnvironmentAuthorizationError]),
+});
+const WsContainersAssociateRpc = Rpc.make(WS_METHODS.containersAssociate, {
+  payload: ContainerAssociationCommand,
+  success: Schema.Void,
+  error: Schema.Union([ContainerError, EnvironmentAuthorizationError]),
 });
 const WsComputerUseStateRpc = Rpc.make(WS_METHODS.computerUseState, {
   payload: Schema.Struct({}),
@@ -2167,6 +2199,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateSettingsRpc,
   WsSetupProfilesSubscribeRpc,
   WsSetupProfilesStateRpc,
+  WsContainersSubscribeRpc,
+  WsContainersSnapshotRpc,
+  WsContainersLogsRpc,
+  WsContainersAssociateRpc,
   WsComputerUseStateRpc,
   WsComputerUseCommandRpc,
   WsMemoryStateRpc,

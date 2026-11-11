@@ -11,6 +11,10 @@ type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 // Trace queries and dashboards depend on these labels, including deviations from method prefixes.
 const RPC_AGGREGATES = {
+  [WS_METHODS.containersSubscribe]: "containers",
+  [WS_METHODS.containersSnapshot]: "containers",
+  [WS_METHODS.containersLogs]: "containers",
+  [WS_METHODS.containersAssociate]: "containers",
   [WS_METHODS.computerUseState]: "computerUse",
   [WS_METHODS.computerUseCommand]: "computerUse",
   [WS_METHODS.memoryState]: "memory",

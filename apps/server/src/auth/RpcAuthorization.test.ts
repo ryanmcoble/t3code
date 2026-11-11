@@ -88,6 +88,16 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("keeps container inventory and logs read-only while association changes require settings access", () => {
+    for (const method of [
+      WS_METHODS.containersSubscribe,
+      WS_METHODS.containersSnapshot,
+      WS_METHODS.containersLogs,
+    ])
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthDiagnosticsReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.containersAssociate)).toBe(AuthSettingsWriteScope);
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

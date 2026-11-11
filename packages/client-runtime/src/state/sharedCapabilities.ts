@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
+  createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createRuntimeCommand,
@@ -89,6 +90,25 @@ export function createSharedCapabilityAtoms<R, E>(
     memoryCommand,
     memoryGrant,
     enroll,
+    containers: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "containers:subscribe",
+      tag: WS_METHODS.containersSubscribe,
+      idleTtlMs: 0,
+    }),
+    containerSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "containers:snapshot",
+      tag: WS_METHODS.containersSnapshot,
+      staleTimeMs: 0,
+    }),
+    containerLogs: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "containers:logs",
+      tag: WS_METHODS.containersLogs,
+      staleTimeMs: 0,
+    }),
+    containerAssociate: createEnvironmentRpcCommand(runtime, {
+      label: "containers:associate",
+      tag: WS_METHODS.containersAssociate,
+    }),
     computerState,
     memoryExport: createEnvironmentRpcCommand(runtime, {
       label: "memory:export",

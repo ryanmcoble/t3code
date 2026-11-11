@@ -1,3 +1,4 @@
+import * as ContainerMonitor from "./containers/ContainerMonitor.ts";
 import * as ComputerUse from "./computer/ComputerUse.ts";
 import * as SharedMemory from "./memory/SharedMemory.ts";
 import * as SetupProfiles from "./setupProfiles/SetupProfiles.ts";
@@ -555,6 +556,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(SetupProfiles.SetupProfiles)({}),
   Layer.mock(SharedMemory.SharedMemory)({}),
   Layer.mock(ComputerUse.ComputerUse)({}),
+  Layer.mock(ContainerMonitor.ContainerMonitor)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
 );
 
