@@ -5,9 +5,14 @@ export {
   containerCountLabel,
   containerPanelSummary,
   containerMetricsLabel,
+  managedContainerStatus,
   type ContainerFilter,
 } from "../containerPresentation.ts";
 export { memoryRulesFromDraft, memoryRulesDraftError } from "../memoryRules.ts";
+export {
+  sharedProjectMappingStatus,
+  sharedProjectMemberLabel,
+} from "../sharedProjectPresentation.ts";
 import {
   WS_METHODS,
   SharedMemoryError,

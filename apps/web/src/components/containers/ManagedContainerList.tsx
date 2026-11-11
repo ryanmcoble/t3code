@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { managedContainerStatus } from "@t3tools/client-runtime/state/shared-capabilities";
 import type {
   ContainerSnapshot,
   EnvironmentId,
@@ -11,6 +12,7 @@ import { useState } from "react";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironment } from "~/state/environments";
+import { useThreadShell } from "~/state/entities";
 import { sharedCapabilities } from "~/state/sharedCapabilities";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Badge } from "../ui/badge";
@@ -105,6 +107,7 @@ function ManagedContainerRow({
     sharedCapabilities.managedContainerCommand.permissionAtom(environmentId),
   );
   const [busy, setBusy] = useState(false);
+  const owner = useThreadShell({ environmentId, threadId: resource.threadId });
   const [error, setError] = useState<string | null>(null);
   const referenced = resource.references.includes(actorId);
   const shared = resource.references.length > 1;
@@ -142,9 +145,11 @@ function ManagedContainerRow({
   return (
     <div className="space-y-2 rounded-md border border-border p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="break-all text-xs font-medium">{resource.name}</span>
+        <span className="break-all text-xs font-medium">
+          {owner?.title ? `Container for ${owner.title}` : "Disposable container"}
+        </span>
         <Badge variant={resource.phase === "failed" || resource.failure ? "warning" : "secondary"}>
-          {resource.phase}
+          {managedContainerStatus(resource, state)}
         </Badge>
         {resource.retained ? <Badge variant="secondary">Retained</Badge> : null}
         {shared ? (
@@ -152,8 +157,7 @@ function ManagedContainerRow({
         ) : null}
       </div>
       <p className="break-all text-xs text-muted-foreground">
-        {resource.containerId?.slice(0, 12) ?? "Creation pending"}
-        {state ? ` · ${state}` : ""}
+        {resource.name} · {resource.containerId?.slice(0, 12) ?? "Creation pending"}
       </p>
       {resource.failure ? (
         <p className="text-xs text-muted-foreground">

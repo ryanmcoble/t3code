@@ -6,8 +6,9 @@ import { SettingsRow, SettingsSection, useSettingsSearchTargetId } from "./setti
 import { SetupProfilesSettings } from "./SetupProfilesSettings";
 import { SharedMemorySettings } from "./SharedMemorySettings";
 import { ComputerUseSettings } from "./ComputerUseSettings";
+import { SharedProjectsSettings } from "./SharedProjectsSettings";
 
-type SetupArea = "tools" | "memory" | "computer";
+type SetupArea = "tools" | "memory" | "computer" | "projects";
 
 export function EnvironmentSetupSettings({
   environments,
@@ -70,17 +71,30 @@ export function EnvironmentSetupSettings({
               value={[area]}
               onValueChange={(values) => {
                 const value = values[0];
-                if (value === "tools" || value === "memory" || value === "computer") setArea(value);
+                if (
+                  value === "tools" ||
+                  value === "memory" ||
+                  value === "computer" ||
+                  value === "projects"
+                )
+                  setArea(value);
               }}
               aria-label="Environment setup area"
             >
               <ToggleGroupItem value="tools">MCP & skills</ToggleGroupItem>
               <ToggleGroupItem value="memory">Memory</ToggleGroupItem>
               <ToggleGroupItem value="computer">Computer use</ToggleGroupItem>
+              <ToggleGroupItem value="projects">Shared projects</ToggleGroupItem>
             </ToggleGroup>
           }
         />
       </SettingsSection>
+      {area === "projects" ? (
+        <SharedProjectsSettings
+          key={environment.environmentId}
+          environmentId={environment.environmentId}
+        />
+      ) : null}
       {area === "tools" ? (
         <SetupProfilesSettings
           key={environment.environmentId}

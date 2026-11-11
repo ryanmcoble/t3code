@@ -63,7 +63,7 @@ function ContainerPanel({
       }).flatMap((group) => group.containers).length
     : null;
   return (
-    <div className="space-y-3 p-3">
+    <div className="space-y-3 p-3" data-thread-details-container-list={threadId ? "" : undefined}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">
           {data && data.status !== "starting"

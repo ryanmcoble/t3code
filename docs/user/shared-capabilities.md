@@ -4,7 +4,12 @@ Use **Settings → Environments → Environment setup** to choose a machine, the
 
 ## Containers
 
-Open **Settings → Environments → Containers** to inspect Docker on a selected machine. A thread's **Containers** section shows containers linked to its project or worktree. Search and filter the inventory, expand a container for its ports and measurements, or request recent logs. Collection stops when the view is closed or backgrounded; cached and partial results are labeled.
+Open **Settings → Environments → Containers** to inspect Docker on a selected machine.
+Inside a thread, open the details panel and expand **Containers** to see containers
+linked to its project or worktree. On mobile, use **Containers** in that thread's
+settings. Search and filter the inventory, expand a container for its ports and
+measurements, or request recent logs. Collection stops when the view is closed or
+backgrounded; cached and partial results are labeled.
 
 T3 uses Compose paths and bind mounts to suggest folder links. You can include or exclude a container explicitly, or link a Compose stack when its configuration files establish its identity. Saved stack links survive container replacement. Remove obsolete links under saved folder rules. These links describe relationships; they do not grant cleanup ownership or change Docker resources. Only local Docker engines are supported. Agents with diagnostics access can inspect the same inventory and bounded logs through `t3_containers`.
 

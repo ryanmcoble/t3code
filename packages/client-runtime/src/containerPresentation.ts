@@ -1,5 +1,46 @@
 import * as DateTime from "effect/DateTime";
-import type { ContainerFolderRule, ContainerRecord, ContainerSnapshot } from "@t3tools/contracts";
+import type {
+  ContainerFolderRule,
+  ContainerRecord,
+  ContainerSnapshot,
+  ManagedContainer,
+} from "@t3tools/contracts";
+
+export function managedContainerStatus(
+  resource: Pick<ManagedContainer, "phase" | "failure">,
+  state: string | undefined,
+): string {
+  switch (resource.phase) {
+    case "pending":
+      return "Creating";
+    case "failed":
+      return "Creation needs recovery";
+    case "releasing":
+      return "Release needs retry";
+    case "released":
+      return "Released";
+    case "ready":
+      if (resource.failure) return "Action failed";
+      switch (state) {
+        case "running":
+          return "Running";
+        case "created":
+          return "Not started";
+        case "exited":
+          return "Stopped";
+        case "paused":
+          return "Paused";
+        case "restarting":
+          return "Restarting";
+        case "dead":
+          return "Stopped with error";
+        case "removing":
+          return "Removing";
+        default:
+          return "Status unavailable";
+      }
+  }
+}
 
 export type ContainerFilter = "all" | "running" | "stopped" | "unhealthy";
 export interface ContainerGroup {

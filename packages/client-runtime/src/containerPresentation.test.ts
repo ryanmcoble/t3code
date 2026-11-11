@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ContainerRecord } from "@t3tools/contracts";
-import { groupContainers, resolveContainerFolders } from "./containerPresentation.ts";
+import {
+  groupContainers,
+  resolveContainerFolders,
+  managedContainerStatus,
+} from "./containerPresentation.ts";
 
 const record: ContainerRecord = {
   id: "a".repeat(64),
@@ -22,6 +26,21 @@ const record: ContainerRecord = {
   associations: [],
 };
 describe("container groups", () => {
+  it("keeps ownership phase distinct from observed container state", () => {
+    expect(managedContainerStatus({ phase: "ready", failure: null }, undefined)).toBe(
+      "Status unavailable",
+    );
+    expect(managedContainerStatus({ phase: "ready", failure: null }, "created")).toBe(
+      "Not started",
+    );
+    expect(managedContainerStatus({ phase: "ready", failure: null }, "exited")).toBe("Stopped");
+    expect(managedContainerStatus({ phase: "released", failure: null }, "running")).toBe(
+      "Released",
+    );
+    expect(managedContainerStatus({ phase: "ready", failure: "unavailable" }, "running")).toBe(
+      "Action failed",
+    );
+  });
   it("uses server-resolved root aliases without confusing sibling path prefixes", () => {
     expect(
       resolveContainerFolders(

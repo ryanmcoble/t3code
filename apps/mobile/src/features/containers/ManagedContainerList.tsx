@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { managedContainerStatus } from "@t3tools/client-runtime/state/shared-capabilities";
 import type {
   ContainerSnapshot,
   EnvironmentId,
@@ -12,6 +13,7 @@ import { Alert, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { useEnvironmentQuery } from "../../state/query";
+import { useThreadShell } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { sharedCapabilities } from "../../state/sharedCapabilities";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -94,6 +96,7 @@ function ManagedContainerRow({
   readonly onRefresh: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const owner = useThreadShell({ environmentId, threadId: resource.threadId });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const command = useAtomCommand(sharedCapabilities.managedContainerCommand, {
@@ -142,15 +145,15 @@ function ManagedContainerRow({
   return (
     <View>
       <ListActionRow
-        label={resource.name}
-        description={`${resource.phase}${state ? ` · ${state}` : ""}${resource.retained ? " · Retained" : ""}${shared ? ` · ${resource.references.length} references` : ""}`}
+        label={owner?.title ? `Container for ${owner.title}` : "Disposable container"}
+        description={`${managedContainerStatus(resource, state)}${resource.retained ? " · Retained" : ""}${shared ? ` · ${resource.references.length} references` : ""}`}
         onPress={() => setExpanded(!expanded)}
       />
       {expanded ? (
         <View>
           <View className="px-4 py-2">
             <Text className="text-xs text-foreground-muted">
-              {resource.containerId?.slice(0, 12) ?? "Creation pending"}
+              {resource.name} · {resource.containerId?.slice(0, 12) ?? "Creation pending"}
             </Text>
             {resource.failure ? (
               <Text>

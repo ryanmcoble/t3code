@@ -46,6 +46,23 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Shared project folders
+
+On web and desktop, open **Settings → Environments → Environment setup**, choose a
+machine, and select **Shared projects**. On mobile, open that environment's settings
+and its **Shared projects** section. Create a named project from registered local
+folders and select its member machines. Each root is either a Git repository or a
+folder of files; each member keeps its own local paths.
+
+Use **Manage folders** to map every root to a distinct registered local project.
+The server checks folder access and repository type before saving. A changed project
+revision requires reviewing the mappings again. **Folders mapped** describes the
+saved mapping; it does not establish synchronized content or execution readiness.
+
+Detach removes the local mapping while preserving the project folders and files.
+The owner can archive and restore the shared project without deleting those files.
+Selecting members alone does not grant remote access or transfer project content.
+
 ## Worktree branch names
 
 In **Settings → Worktrees → Worktree branch naming**, choose a static prefix,
