@@ -7,6 +7,10 @@ export interface NativeSetupLayout {
   readonly skillDirectory: string | null;
   readonly configFiles: ReadonlyArray<string>;
   readonly mcpSupported: boolean;
+  readonly workHooks?: {
+    readonly harness: "claude" | "codex" | "copilot" | "opencode";
+    readonly path: string;
+  };
 }
 
 export function nativeSetupLayout(
@@ -53,6 +57,7 @@ export function nativeSetupLayout(
             ? path.join(root, ".claude.json")
             : path.join(home, ".claude.json"),
         ],
+        workHooks: { harness: "claude", path: path.join(root, "settings.json") },
         mcpSupported: true,
       };
     }
@@ -71,6 +76,7 @@ export function nativeSetupLayout(
         driver: instance.driver,
         skillDirectory: path.join(root, "skills"),
         configFiles: [],
+        workHooks: { harness: "codex", path: path.join(root, "hooks.json") },
         mcpSupported: true,
       };
     }
@@ -91,6 +97,14 @@ export function nativeSetupLayout(
             ? []
             : [path.join(root, "opencode.json"), path.join(root, "opencode.jsonc")],
         mcpSupported: !(typeof config.serverUrl === "string" && config.serverUrl.trim()),
+        ...(root !== null && !(typeof config.serverUrl === "string" && config.serverUrl.trim())
+          ? {
+              workHooks: {
+                harness: "opencode" as const,
+                path: path.join(root, "plugins", "singlecomm-work.js"),
+              },
+            }
+          : {}),
       };
     }
     case "acpRegistry": {
@@ -105,6 +119,14 @@ export function nativeSetupLayout(
         skillDirectory: copilot ? path.join(home, ".copilot", "skills") : null,
         configFiles: copilot ? [path.join(home, ".copilot", "mcp-config.json")] : [],
         mcpSupported: copilot,
+        ...(copilot
+          ? {
+              workHooks: {
+                harness: "copilot" as const,
+                path: path.join(home, ".copilot", "hooks", "singlecomm-work.json"),
+              },
+            }
+          : {}),
       };
     }
     default:

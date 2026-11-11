@@ -97,6 +97,105 @@ const withSetup = <A, E, R>(
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
+it.effect(
+  "merges managed hooks without owning unrelated settings or erasing local hook edits",
+  () =>
+    withSetup((root) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const files = yield* SetupFiles.SetupFiles;
+        const packages = yield* SetupPackages.SetupPackages;
+        const target = `${root}/claude/settings.json`;
+        yield* fs.makeDirectory(`${root}/claude`);
+        const other = { hooks: [{ type: "command", command: "echo unrelated" }] };
+        yield* fs.writeFileString(
+          target,
+          JSON.stringify({ model: "keep", hooks: { Stop: [other] } }),
+        );
+        const owned = {
+          hooks: [{ type: "command", command: "/bin/sc work hook claude stop", timeout: 10 }],
+        };
+        const digest = yield* packages.put(
+          new TextEncoder().encode(JSON.stringify({ hooks: { Stop: [owned] } })),
+        );
+        const wanted = [
+          {
+            path: target,
+            root: `${root}/claude`,
+            digest,
+            executable: false,
+            format: "claude-hooks" as const,
+          },
+        ];
+        assert.deepEqual(yield* files.apply("hooks", wanted), []);
+        const merged = JSON.parse(yield* fs.readFileString(target));
+        assert.strictEqual(merged.model, "keep");
+        assert.deepEqual(merged.hooks.Stop, [other, owned]);
+        merged.model = "changed outside hooks";
+        yield* fs.writeFileString(target, JSON.stringify(merged));
+        assert.deepEqual(yield* files.inspect("hooks"), []);
+        assert.deepEqual(yield* files.apply("hooks", wanted), []);
+        merged.hooks.Stop[1].hooks[0].timeout = 99;
+        yield* fs.writeFileString(target, JSON.stringify(merged));
+        assert.deepEqual(yield* files.apply("hooks", wanted), [target]);
+        assert.deepEqual(yield* files.detach("hooks", true), [target]);
+        yield* files.resolve(target, "use-profile");
+        assert.deepEqual(yield* files.apply("hooks", wanted), []);
+        assert.deepEqual(yield* files.detach("hooks", true), []);
+        const removed = JSON.parse(yield* fs.readFileString(target));
+        assert.strictEqual(removed.model, "changed outside hooks");
+        assert.deepEqual(removed.hooks.Stop, [other]);
+        assert.deepEqual(yield* files.apply("hooks", wanted), []);
+        yield* fs.writeFileString(target, JSON.stringify(removed));
+        assert.deepEqual(yield* files.apply("hooks", wanted), [target]);
+        yield* files.resolve(target, "use-profile");
+        assert.deepEqual(yield* files.apply("hooks", wanted), []);
+        yield* fs.writeFileString(target, JSON.stringify(removed));
+        assert.deepEqual(yield* files.apply("hooks", wanted), [target]);
+        yield* files.resolve(target, "keep-local");
+        assert.deepEqual(yield* files.apply("hooks", wanted), []);
+        assert.deepEqual(JSON.parse(yield* fs.readFileString(target)), removed);
+        assert.deepEqual(yield* files.detach("hooks", true), []);
+
+        const copilot = `${root}/claude/copilot-hooks.json`;
+        const otherCopilot = { type: "command", bash: "echo keep" };
+        const ownedCopilot = {
+          type: "command",
+          bash: "/bin/sc work hook copilot stop",
+          timeoutSec: 10,
+        };
+        yield* fs.writeFileString(
+          copilot,
+          JSON.stringify({ version: 1, hooks: { agentStop: [otherCopilot] } }),
+        );
+        const copilotDigest = yield* packages.put(
+          new TextEncoder().encode(JSON.stringify({ hooks: { agentStop: [ownedCopilot] } })),
+        );
+        assert.deepEqual(
+          yield* files.apply("copilot-hooks", [
+            {
+              path: copilot,
+              root: `${root}/claude`,
+              digest: copilotDigest,
+              executable: false,
+              format: "copilot-hooks",
+            },
+          ]),
+          [],
+        );
+        assert.deepEqual(JSON.parse(yield* fs.readFileString(copilot)).hooks.agentStop, [
+          otherCopilot,
+          ownedCopilot,
+        ]);
+        assert.deepEqual(yield* files.detach("copilot-hooks", true), []);
+        assert.deepEqual(JSON.parse(yield* fs.readFileString(copilot)), {
+          version: 1,
+          hooks: { agentStop: [otherCopilot] },
+        });
+      }),
+    ),
+);
+
 it.effect("retains revisions, rejects stale publications, and restricts subscription reads", () =>
   withSetup(() =>
     Effect.gen(function* () {
@@ -106,6 +205,7 @@ it.effect("retains revisions, rejects stale publications, and restricts subscrip
         profile: { name: "Development", expectedRevision: 0, connections: [], skills: [] },
       });
       const profile = state.profiles[0]!;
+      assert.strictEqual(profile.schemaVersion, 1);
       const token = (yield* profiles.grant({
         profileId: profile.id,
         destinationEnvironmentId: EnvironmentId.make("destination"),
@@ -121,8 +221,18 @@ it.effect("retains revisions, rejects stale publications, and restricts subscrip
       assert.strictEqual(wrongDestination.reason, "denied");
       yield* profiles.command({
         operation: "publish",
-        profile: { ...profile, expectedRevision: 1, name: "Updated" },
+        profile: {
+          ...profile,
+          expectedRevision: 1,
+          name: "Updated",
+          hooks: [{ integration: "singlecomm-work", enabled: false, drivers: [] }],
+        },
       });
+      const hookProfile = (yield* profiles.state).profiles[0]!;
+      assert.strictEqual(hookProfile.schemaVersion, 2);
+      assert.deepEqual(hookProfile.hooks, [
+        { integration: "singlecomm-work", enabled: false, drivers: [] },
+      ]);
       const stale = yield* profiles
         .command({ operation: "publish", profile: { ...profile, expectedRevision: 1 } })
         .pipe(Effect.flip);
@@ -400,6 +510,7 @@ it.effect(
           revoke: false,
         })).token!;
         let online = true;
+        let hooksSupported = true;
         let identity: string = ownerId;
         let authorizedRequests = 0;
         const client = HttpClient.make((request, url) =>
@@ -414,7 +525,11 @@ it.effect(
                   label: "Owner",
                   platform: { os: "darwin", arch: "arm64" },
                   serverVersion: "test",
-                  capabilities: { repositoryIdentity: true, setupProfiles: 1 },
+                  capabilities: {
+                    repositoryIdentity: true,
+                    setupProfiles: 1,
+                    ...(hooksSupported ? { setupHooks: 1 } : {}),
+                  },
                 }),
               );
             authorizedRequests++;
@@ -467,7 +582,12 @@ it.effect(
               });
               yield* source.command({
                 operation: "publish",
-                profile: { ...profile, expectedRevision: 1, skills: update.skills },
+                profile: {
+                  ...profile,
+                  expectedRevision: 1,
+                  skills: update.skills,
+                  hooks: [{ integration: "singlecomm-work", enabled: false, drivers: [] }],
+                },
               });
               yield* destination.reconcile(() => Effect.void);
               assert.include(yield* targetFs.readFileString(target), "Version one");
@@ -482,6 +602,16 @@ it.effect(
               yield* destination.reconcile(() => Effect.void);
               assert.include(yield* targetFs.readFileString(target), "Version two");
               assert.strictEqual((yield* destination.state).binding!.appliedRevision, 2);
+              assert.strictEqual((yield* destination.state).binding!.profile.schemaVersion, 2);
+              assert.deepEqual((yield* destination.state).binding!.profile.hooks, [
+                { integration: "singlecomm-work", enabled: false, drivers: [] },
+              ]);
+              hooksSupported = false;
+              const beforeUnsupported = authorizedRequests;
+              yield* destination.reconcile(() => Effect.void);
+              assert.strictEqual(authorizedRequests, beforeUnsupported);
+              assert.include((yield* destination.state).binding!.error!, "newer server");
+              assert.include(yield* targetFs.readFileString(target), "Version two");
             }),
           { environmentId: destinationId, client },
         );

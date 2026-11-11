@@ -218,6 +218,7 @@ export const make = Effect.gen(function* () {
     ...(databaseMigration === undefined ? {} : { databaseMigration }),
     capabilities: {
       setupProfiles: 1,
+      setupHooks: 1,
       sharedMemory: 1,
       memoryLifecycle: 1,
       computerUse: 1,

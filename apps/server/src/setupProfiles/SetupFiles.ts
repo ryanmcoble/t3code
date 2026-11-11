@@ -5,14 +5,24 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as SetupPackages from "./SetupPackages.ts";
 import * as SetupProfileStore from "./SetupProfileStore.ts";
+import {
+  decodeHookJson,
+  encodeHookJson,
+  hookFragment,
+  mergeHookFragment,
+  stableHookJson,
+  type HookJsonFormat,
+} from "./hookJson.ts";
 
 export interface SetupFile {
   readonly path: string;
   readonly root: string;
   readonly digest: string;
   readonly executable: boolean;
+  readonly format?: HookJsonFormat;
 }
 
 export class SetupFiles extends Context.Service<
@@ -43,7 +53,16 @@ const make = Effect.gen(function* () {
   const store = yield* SetupProfileStore.SetupProfileStore;
   const packages = yield* SetupPackages.SetupPackages;
   const storageError = (cause: unknown) => new SetupProfileError({ reason: "storage", cause });
-  const currentDigest = Effect.fn("SetupFiles.currentDigest")(function* (target: string) {
+  const formatOf = (digest: string | null): HookJsonFormat | undefined =>
+    digest?.startsWith("json-hooks:claude-hooks:")
+      ? "claude-hooks"
+      : digest?.startsWith("json-hooks:copilot-hooks:")
+        ? "copilot-hooks"
+        : undefined;
+  const currentDigest = Effect.fn("SetupFiles.currentDigest")(function* (
+    target: string,
+    format?: HookJsonFormat,
+  ) {
     if (
       yield* fs.readLink(target).pipe(
         Effect.map(() => true),
@@ -58,6 +77,15 @@ const make = Effect.gen(function* () {
     if (stat.type !== "File") return "directory";
     if (Number(stat.size) > 64 * 1024 * 1024) return "too-large";
     const bytes = yield* fs.readFile(target).pipe(Effect.mapError(storageError));
+    if (format) {
+      const fragment = yield* Effect.try({
+        try: () => hookFragment(decodeHookJson(new TextDecoder().decode(bytes)), format),
+        catch: () => new SetupProfileError({ reason: "conflict" }),
+      }).pipe(Effect.option);
+      if (Option.isNone(fragment)) return "invalid-json";
+      if (stableHookJson(fragment.value) === '{"hooks":{}}') return null;
+      return `json-hooks:${format}:${yield* packages.digest(new TextEncoder().encode(stableHookJson(fragment.value)))}`;
+    }
     return `${yield* packages.digest(bytes)}:${stat.mode & 0o111 ? "x" : "r"}`;
   });
   const contained = Effect.fn("SetupFiles.contained")(function* (target: string, root: string) {
@@ -103,7 +131,10 @@ const make = Effect.gen(function* () {
     );
     yield* fs.rename(link, backup).pipe(Effect.mapError(storageError));
   });
-  const atomicWrite = Effect.fn("SetupFiles.atomicWrite")(function* (file: SetupFile) {
+  const atomicWrite = Effect.fn("SetupFiles.atomicWrite")(function* (
+    file: SetupFile,
+    expected: string | null,
+  ) {
     const parent = path.dirname(file.path);
     yield* fs
       .makeDirectory(parent, { recursive: true, mode: 0o700 })
@@ -116,10 +147,46 @@ const make = Effect.gen(function* () {
     }
     const temp = path.join(parent, `.t3-setup-${yield* crypto.randomUUIDv4().pipe(Effect.orDie)}`);
     const bytes = yield* packages.read(file.digest);
+    const before = yield* fs.readFile(file.path).pipe(Effect.option);
+    if ((yield* currentDigest(file.path, file.format)) !== expected)
+      return yield* new SetupProfileError({ reason: "conflict" });
+    const output = file.format
+      ? yield* Effect.try({
+          try: () =>
+            new TextEncoder().encode(
+              encodeHookJson(
+                mergeHookFragment(
+                  Option.isSome(before)
+                    ? decodeHookJson(new TextDecoder().decode(before.value))
+                    : {},
+                  decodeHookJson(new TextDecoder().decode(bytes)),
+                  file.format!,
+                ),
+              ) + "\n",
+            ),
+          catch: () => new SetupProfileError({ reason: "conflict" }),
+        })
+      : bytes;
+    if (Option.isSome(before)) yield* packages.put(before.value);
     yield* fs
-      .writeFile(temp, bytes, { mode: file.executable ? 0o700 : 0o600 })
+      .writeFile(temp, output, { mode: file.executable ? 0o700 : 0o600 })
       .pipe(Effect.mapError(storageError));
-    yield* fs.rename(temp, file.path).pipe(Effect.mapError(storageError));
+    yield* Effect.gen(function* () {
+      const now = yield* fs.readFile(file.path).pipe(Effect.option);
+      if (!(yield* contained(file.path, root)))
+        return yield* new SetupProfileError({ reason: "conflict" });
+      if (
+        Option.isSome(before) !== Option.isSome(now) ||
+        (Option.isSome(before) &&
+          Option.isSome(now) &&
+          !before.value.every((byte, index) => byte === now.value[index])) ||
+        (Option.isSome(before) && Option.isSome(now) && before.value.length !== now.value.length)
+      )
+        return yield* new SetupProfileError({ reason: "conflict" });
+      yield* (Option.isNone(before) ? fs.link(temp, file.path) : fs.rename(temp, file.path)).pipe(
+        Effect.mapError(storageError),
+      );
+    }).pipe(Effect.ensuring(fs.remove(temp).pipe(Effect.ignore)));
   });
   const remove = Effect.fn("SetupFiles.remove")(function* (p: SetupProfileStore.ManagedSetupPath) {
     if (p.overridden) {
@@ -127,14 +194,21 @@ const make = Effect.gen(function* () {
       return true;
     }
     if (!(yield* contained(p.path, p.root))) return false;
-    const current = yield* currentDigest(p.path);
+    const format = formatOf(p.digest) ?? formatOf(p.pending_digest);
+    const current = yield* currentDigest(p.path, format);
     if (current === null) {
       yield* store.removePath(p.path);
       return true;
     }
     if (current !== p.digest && current !== p.pending_digest) return false;
     yield* store.savePath({ ...p, pending_digest: "remove" });
-    yield* fs.remove(p.path).pipe(Effect.mapError(storageError));
+    if (format) {
+      const digest = yield* packages.put(new TextEncoder().encode('{"hooks":{}}'));
+      yield* atomicWrite(
+        { path: p.path, root: p.root, digest, executable: false, format },
+        current,
+      );
+    } else yield* fs.remove(p.path).pipe(Effect.mapError(storageError));
     yield* store.removePath(p.path);
     return true;
   });
@@ -144,7 +218,7 @@ const make = Effect.gen(function* () {
       if (entry.profile_id !== profileId || entry.overridden) continue;
       if (
         !(yield* contained(entry.path, entry.root)) ||
-        (yield* currentDigest(entry.path)) !== entry.digest
+        (yield* currentDigest(entry.path, formatOf(entry.digest))) !== entry.digest
       )
         conflicts.push(entry.path);
     }
@@ -171,7 +245,7 @@ const make = Effect.gen(function* () {
             path: file.path,
             root,
             profile_id: profileId,
-            digest: null,
+            digest: file.format ? `json-hooks:${file.format}:unowned` : null,
             pending_digest: null,
             overridden: 0,
           });
@@ -182,24 +256,42 @@ const make = Effect.gen(function* () {
         conflicts.push(file.path);
         continue;
       }
-      const actual = yield* currentDigest(file.path);
-      const desired = `${file.digest}:${file.executable ? "x" : "r"}`;
+      const actual = yield* currentDigest(file.path, file.format);
+      const bytesForHooks = file.format ? yield* packages.read(file.digest) : new Uint8Array();
+      const hookDigest = file.format
+        ? yield* Effect.try({
+            try: () =>
+              stableHookJson(
+                hookFragment(decodeHookJson(new TextDecoder().decode(bytesForHooks)), file.format!),
+              ),
+            catch: () => new SetupProfileError({ reason: "invalid" }),
+          })
+        : null;
+      const desired = file.format
+        ? `json-hooks:${file.format}:${yield* packages.digest(new TextEncoder().encode(hookDigest!))}`
+        : `${file.digest}:${file.executable ? "x" : "r"}`;
       const recovered = previous?.pending_digest === actual && actual !== null;
       // Existing identical files can join the profile without being rewritten.
       const matchesProfile = actual === desired && (!previous || previous.profile_id === profileId);
+      const unchanged =
+        actual === previous?.digest ||
+        (actual === null &&
+          file.format !== undefined &&
+          previous?.digest === `json-hooks:${file.format}:empty`);
       if (
-        actual !== null &&
+        (actual !== null ||
+          (file.format &&
+            previous?.digest &&
+            (yield* fs.exists(file.path).pipe(Effect.mapError(storageError))))) &&
         !matchesProfile &&
-        (!previous ||
-          previous.profile_id !== profileId ||
-          (!recovered && actual !== previous.digest))
+        (!previous || previous.profile_id !== profileId || (!recovered && !unchanged))
       ) {
         if (!previous)
           yield* store.savePath({
             path: file.path,
             root,
             profile_id: profileId,
-            digest: null,
+            digest: file.format ? `json-hooks:${file.format}:unowned` : null,
             pending_digest: null,
             overridden: 0,
           });
@@ -215,7 +307,7 @@ const make = Effect.gen(function* () {
         overridden: 0,
       };
       yield* store.savePath(entry);
-      if (actual !== desired) yield* atomicWrite(file);
+      if (actual !== desired) yield* atomicWrite(file, actual);
       const settled = { ...entry, digest: desired, pending_digest: null };
       yield* store.savePath(settled);
       managed.set(file.path, settled);
@@ -252,17 +344,23 @@ const make = Effect.gen(function* () {
     if (parentLink) yield* preserveLink(parentLink, entry.root);
     if (!(yield* contained(target, entry.root)))
       return yield* new SetupProfileError({ reason: "invalid" });
-    let digest = yield* currentDigest(target);
+    const format = formatOf(entry.digest) ?? formatOf(entry.pending_digest);
+    let digest = yield* currentDigest(target, format);
     if (digest === "symlink") {
       yield* preserveLink(target, entry.root);
       digest = null;
     }
     if (
-      ["symlink", "directory", "too-large"].includes(digest ?? "") &&
+      ["symlink", "directory", "too-large", "invalid-json"].includes(digest ?? "") &&
       resolution === "use-profile"
     )
       return yield* new SetupProfileError({ reason: "invalid" });
-    yield* store.savePath({ ...entry, digest, pending_digest: null, overridden: 0 });
+    yield* store.savePath({
+      ...entry,
+      digest: digest ?? (format ? `json-hooks:${format}:empty` : null),
+      pending_digest: null,
+      overridden: 0,
+    });
   });
   return SetupFiles.of({ apply, inspect, detach, resolve });
 });

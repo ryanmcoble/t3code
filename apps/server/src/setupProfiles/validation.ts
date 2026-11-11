@@ -40,8 +40,20 @@ export function hasInlineCredential(args: ReadonlyArray<string>): boolean {
   );
 }
 
-export function validateSetupProfile(profile: Pick<SetupProfile, "connections" | "skills">): void {
+export function validateSetupProfile(
+  profile: Pick<SetupProfile, "connections" | "skills" | "hooks"> &
+    Partial<Pick<SetupProfile, "schemaVersion">>,
+): void {
   const names = new Set<string>();
+  if ((profile.hooks?.length ?? 0) > 1 || (profile.hooks?.length && profile.schemaVersion === 1))
+    throw new SetupProfileError({ reason: "invalid" });
+  if (
+    profile.hooks?.some((hook) => hook.enabled) &&
+    profile.skills.some(
+      (skill) => skill.name === "singlecomm-work-ledger" && skill.enabled !== false,
+    )
+  )
+    throw new SetupProfileError({ reason: "invalid" });
   if (profile.connections.length > 128 || profile.skills.length > 512)
     throw new SetupProfileError({ reason: "invalid" });
   for (const c of profile.connections) {

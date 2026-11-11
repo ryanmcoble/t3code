@@ -77,8 +77,8 @@ export function SetupProfileBindingStatus({
       />
       <details className="space-y-3 px-4">
         <summary className="cursor-pointer text-sm font-medium">
-          MCP connections and skills · {summary.configured} configured · {summary.verified} verified
-          · {summary.needsAttention} need attention
+          MCP connections, skills and hooks · {summary.configured} configured · {summary.verified}{" "}
+          verified · {summary.needsAttention} need attention
         </summary>
         <Input
           aria-label="Filter setup items"
@@ -96,7 +96,11 @@ export function SetupProfileBindingStatus({
                 <p className="break-words font-medium">{item.name}</p>
                 <p className="text-xs text-muted-foreground">
                   {providerLabels.get(item.instanceId) ?? item.instanceId} ·{" "}
-                  {item.kind === "mcp" ? "MCP connection" : "Skill"}
+                  {item.kind === "mcp"
+                    ? "MCP connection"
+                    : item.kind === "hook"
+                      ? "Lifecycle hooks"
+                      : "Skill"}
                 </p>
                 {item.message ? (
                   <p className="break-words text-xs text-muted-foreground">{item.message}</p>

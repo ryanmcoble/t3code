@@ -66,6 +66,7 @@ export function SetupProfilesSettings({
     encodePolicy({ memoryScopes: [], computerUse: null }),
   );
   const [skills, setSkills] = useState<SetupProfile["skills"]>([]);
+  const [workHooks, setWorkHooks] = useState(false);
   const [instanceId, setInstanceId] = useState("");
   const [selectedIds, setInstanceIds] = useState<ReadonlyArray<string> | null>(null);
   const instanceIds = selectedIds ?? state.data?.binding?.instanceIds ?? [];
@@ -113,6 +114,10 @@ export function SetupProfilesSettings({
     setName(profile?.name ?? "Development setup");
     setConnections(profile ? encodeConnections(profile.connections) : "[]");
     setSkills(profile?.skills ?? []);
+    setWorkHooks(
+      profile?.hooks?.some((hook) => hook.integration === "singlecomm-work" && hook.enabled) ??
+        false,
+    );
     setPolicyText(
       encodePolicy({
         memoryScopes: profile?.memoryScopes ?? [],
@@ -312,6 +317,22 @@ export function SetupProfilesSettings({
               />
             </details>
             <SetupMcpEditor value={connections} onChange={setConnections} />
+            <SettingsRow
+              title="SingleComm work tracking"
+              description={
+                config?.environment.capabilities.setupHooks === 1
+                  ? "Install the work skill and lifecycle hooks for selected harnesses on each subscribed machine. Local sign-ins and unrelated hooks stay on that machine."
+                  : "Update this server to manage work hooks through profiles."
+              }
+              control={
+                <Switch
+                  aria-label="Manage SingleComm work hooks"
+                  checked={workHooks}
+                  disabled={config?.environment.capabilities.setupHooks !== 1}
+                  onCheckedChange={setWorkHooks}
+                />
+              }
+            />
             {skills.map((skill) => (
               <div key={skill.name} className="flex items-center justify-between gap-3 text-sm">
                 <span>
@@ -361,6 +382,18 @@ export function SetupProfilesSettings({
                       expectedRevision: editing?.revision ?? 0,
                       connections: parsed,
                       skills,
+                      ...(config?.environment.capabilities.setupHooks === 1 &&
+                      (workHooks || editing?.hooks?.length)
+                        ? {
+                            hooks: [
+                              {
+                                integration: "singlecomm-work" as const,
+                                enabled: workHooks,
+                                drivers: [],
+                              },
+                            ],
+                          }
+                        : {}),
                       memoryScopes: policy.memoryScopes,
                       ...(policy.computerUse ? { computerUse: policy.computerUse } : {}),
                     },

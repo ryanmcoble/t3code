@@ -14,6 +14,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
 export function SetupProfileSection({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
@@ -84,7 +85,12 @@ export function SetupProfileSection({ environmentId }: { readonly environmentId:
                 key={`${item.instanceId}:${item.kind}:${item.name}`}
                 className="text-sm text-foreground-muted"
               >
-                {item.name} · {item.status.replaceAll("-", " ")}
+                {item.name} ·{" "}
+                {config.providers.find((provider) => provider.instanceId === item.instanceId)
+                  ?.displayName ?? item.instanceId}{" "}
+                · {item.status.replaceAll("-", " ")}
+                {"\n"}
+                {item.message}
               </Text>
             ))
           : null}
@@ -92,7 +98,7 @@ export function SetupProfileSection({ environmentId }: { readonly environmentId:
       {binding ? (
         <>
           <ListActionRow
-            label={showItems ? "Hide setup items" : "Review MCP connections and skills"}
+            label={showItems ? "Hide setup items" : "Review MCP connections, skills and hooks"}
             description={`${presentation.configured} configured · ${presentation.verified} verified · ${presentation.needsAttention} need attention`}
             onPress={() => setShowItems(!showItems)}
           />
@@ -116,20 +122,42 @@ export function SetupProfileSection({ environmentId }: { readonly environmentId:
         </>
       ) : null}
       {state.data?.profiles.map((p) => (
-        <ListActionRow
-          key={p.id}
-          label={`Apply ${p.name}`}
-          description="Apply to enabled harnesses and keep synchronized"
-          disabled={!allowed || busy}
-          onPress={() =>
-            void run({
-              operation: "apply",
-              profileId: p.id,
-              subscribe: true,
-              instanceIds: config.providers.filter((p) => p.enabled).map((p) => p.instanceId),
-            })
-          }
-        />
+        <View key={p.id}>
+          {config.environment.capabilities.setupHooks === 1 ? (
+            <SettingsSwitchRow
+              label={`${p.name}: work tracking`}
+              subtitle="Publish SingleComm hooks and work skill to selected harnesses on subscribed machines. Each machine needs the CLI."
+              value={
+                p.hooks?.some((hook) => hook.integration === "singlecomm-work" && hook.enabled) ??
+                false
+              }
+              disabled={!allowed || busy}
+              onValueChange={(enabled) =>
+                void run({
+                  operation: "publish",
+                  profile: {
+                    ...p,
+                    expectedRevision: p.revision,
+                    hooks: [{ integration: "singlecomm-work", enabled, drivers: [] }],
+                  },
+                })
+              }
+            />
+          ) : null}
+          <ListActionRow
+            label={`Apply ${p.name}`}
+            description="Apply to enabled harnesses and keep synchronized"
+            disabled={!allowed || busy}
+            onPress={() =>
+              void run({
+                operation: "apply",
+                profileId: p.id,
+                subscribe: true,
+                instanceIds: config.providers.filter((p) => p.enabled).map((p) => p.instanceId),
+              })
+            }
+          />
+        </View>
       ))}
       {owners.map((e) => (
         <ListActionRow
