@@ -1,6 +1,6 @@
 # Share MCP connections and skills
 
-Use **Settings → Environments → Setup profiles** to share selected MCP connections and skills between machines. Each environment keeps its own provider accounts and sign-ins.
+Use **Settings → Environments → Environment setup → MCP & skills** to share selected MCP connections and skills between machines. Each environment keeps its own provider accounts and sign-ins.
 
 Create a profile on the environment that will own it. Import MCP connections from a configured harness and enter the skill folders you want to include. A skill includes its companion files, scripts and assets. Review the draft, remove anything you do not want to share, and publish it. Importing and publishing do not change other environments.
 
@@ -37,3 +37,7 @@ t3 setup restore <backup-directory>
 ```
 
 The restored profile has a new identity. Select it and enroll environments again; credentials and subscriptions are excluded from the backup. Use `--base-dir` for a separate T3 installation.
+
+The status separates applied configuration, verified tools, paused synchronization, deferred activation and items needing attention. Active work keeps its current setup until it finishes. Review conflicts to choose which local changes to preserve; configured items still need a successful invocation to become verified.
+
+Edit a profile to enable or disable individual MCP connections and skill packages. Publishing updates subscribed environments when they can activate safely. Disabling a skill removes its profile-managed files through the normal conflict-preserving process; its package stays in the profile so it can be enabled again.

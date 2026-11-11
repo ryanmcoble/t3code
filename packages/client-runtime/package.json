@@ -526,6 +526,10 @@
     "./state/shared-capabilities": {
       "types": "./src/state/sharedCapabilities.ts",
       "default": "./src/state/sharedCapabilities.ts"
+    },
+    "./setup-profile-presentation": {
+      "types": "./src/setupProfilePresentation.ts",
+      "default": "./src/setupProfilePresentation.ts"
     }
   },
   "scripts": {

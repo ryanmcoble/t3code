@@ -13,7 +13,7 @@ import {
   type ProjectId,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { randomUUID } from "~/lib/utils";
 import { useProjects } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
@@ -24,7 +24,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
-import { SettingsSection } from "./settingsLayout";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
 
 export function SharedMemorySettings({
   environmentId,
@@ -60,6 +60,12 @@ export function SharedMemorySettings({
   const enroll = useAtomCommand(sharedCapabilities.enroll, { reportFailure: false });
   const exportScope = useAtomCommand(sharedCapabilities.memoryExport, { reportFailure: false });
   const [selected, setSelected] = useState("");
+  const [categoryEditorOpen, setCategoryEditorOpen] = useState(false);
+  const categoryNameRef = useRef<HTMLInputElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Move DOM focus into the category form after the user opens it.
+  useEffect(() => {
+    if (categoryEditorOpen) categoryNameRef.current?.focus();
+  }, [categoryEditorOpen]);
   const scopes = state.data?.scopes ?? [];
   const bindings = state.data?.bindings ?? [];
   const selectedId = selected || scopes[0]?.id || bindings[0]?.scopeId || "";
@@ -117,12 +123,23 @@ export function SharedMemorySettings({
   };
   if (!supported) return null;
   return (
-    <SettingsSection title={`Shared memory · ${label}`}>
+    <SettingsSection id="shared-memory" title={`Shared memory · ${label}`}>
       <div className="space-y-4 px-4 py-3">
         <p className="text-sm text-muted-foreground">
           Keep decisions, preferences and verified findings in one place across harnesses. Each
           scope has explicit project and provider access. Retrieved notes are evidence.
         </p>
+        {state.data && !scopes.length && !bindings.length ? (
+          <SettingsRow
+            title="No memory categories configured"
+            description="Recall has no shared knowledge to search yet. Create a category and choose its projects and allowed harnesses."
+            control={
+              <Button size="sm" disabled={!allowed} onClick={() => setCategoryEditorOpen(true)}>
+                Create category
+              </Button>
+            }
+          />
+        ) : null}
         {lifecycle && state.data ? (
           <MemoryLearningControls
             key={state.data.settings?.revision ?? 0}
@@ -323,8 +340,11 @@ export function SharedMemorySettings({
               </Button>
             </div>
           ) : null}
-          <details>
-            <summary>Create a scope or change access</summary>
+          <details
+            open={categoryEditorOpen}
+            onToggle={(event) => setCategoryEditorOpen(event.currentTarget.open)}
+          >
+            <summary>Create a category or change access</summary>
             <div className="space-y-3 py-3">
               {scopes.map((s) => (
                 <Button
@@ -363,7 +383,8 @@ export function SharedMemorySettings({
                 </Button>
               ))}
               <Input
-                aria-label="Scope name"
+                ref={categoryNameRef}
+                aria-label="Category name"
                 placeholder="Scope name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}

@@ -1,6 +1,6 @@
 # Share memory and desktop tools
 
-Use **Settings → Environments** to manage shared memory and computer use for each connected machine. The mobile app exposes the same controls under the environment's settings.
+Use **Settings → Environments → Environment setup** to choose a machine, then open **Memory** or **Computer use**. The mobile app exposes the same controls under the environment's settings.
 
 ## Shared memory
 
@@ -22,11 +22,15 @@ A setup profile may advertise memory owner/scope references and access policy. C
 
 ## Computer use
 
+Check setup before enabling access. T3 reports driver availability, Accessibility and Screen Recording separately; available permissions do not prove an app can be captured. **Set up with Calculator** prepares a narrow starting policy for your enabled harnesses. Ask an agent to observe Calculator and perform a harmless action to verify the full path.
+
+Choose applications by name from the searchable application list. **Selected applications** limits access to the checked apps; **All applications** permits every app on that environment. Advanced wildcard rules allow an app-identifier prefix, for example `com.apple.*`. Broad rules require confirmation before saving. Each harness still needs to be selected, and operating-system permissions remain local. Older servers must be updated before using application-rule controls.
+
 Install and start [Cua Driver](https://cua.ai/docs/cua-driver/quickstart) 0.38 or newer in the desktop session on each environment you want agents to operate. It is a separate prerequisite; T3 does not install Cua Spaces or copy OS permissions. On macOS, enable Cua Driver's Accessibility and Screen Recording permissions. T3's permission checks do not open those prompts.
 
-Enable computer use, select the harness instances, and enter the allowed app identifiers. On macOS these are bundle IDs such as `com.apple.calculator`. A local executable override is available when the driver is outside the server's PATH. Desktop policy may come from the applied setup profile; an explicit local configuration takes precedence until you select **Use profile desktop policy**.
+Enable computer use and select the harness instances and permitted applications. A local executable override is available when the driver is outside the server's PATH. Desktop policy may come from the applied setup profile; an explicit local configuration takes precedence until you select **Use profile desktop policy**.
 
-In a full-access/default thread, agents use `t3_computer_apps`, acquire an app lease with `t3_computer_control`, and inspect a window with `t3_computer_observe`. Observation returns accessibility information and an image. Input is limited to that thread's leased app. The agent should observe after acting and release the desktop when finished.
+In a full-access/default thread, agents use `t3_computer_apps`, launch a permitted closed app through `t3_computer_control` when needed, acquire its app lease, and inspect a window with `t3_computer_observe`. Observation returns accessibility information and an image. Input is limited to that thread's leased app. The agent should observe after acting and release the desktop when finished.
 
 Each lease binds an exact app process and window. One T3 thread controls an environment's desktop at a time. The lease expires after two idle minutes. Settings show its owner and provide **Release desktop**, including from mobile. Release cancels a pending driver request and prevents further calls with that lease. Direct Cua clients outside T3 do not participate in this coordination.
 

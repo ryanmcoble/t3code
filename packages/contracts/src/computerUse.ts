@@ -2,16 +2,40 @@ import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
+const AppRule = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(512),
+  Schema.isPattern(/^(?:\*|[^*]+\*?)$/),
+);
+
+export function computerAppAllowed(
+  rules: ReadonlyArray<string>,
+  app: string,
+  wildcardRules = false,
+): boolean {
+  if (!app) return false;
+  if (!wildcardRules) return rules.includes(app);
+  return rules.some(
+    (rule) =>
+      rule === "*" ||
+      rule === app ||
+      (rule.endsWith("*") &&
+        rule.indexOf("*") === rule.length - 1 &&
+        app.startsWith(rule.slice(0, -1))),
+  );
+}
+
 export const ComputerUseConfig = Schema.Struct({
   enabled: Schema.Boolean,
   command: TrimmedNonEmptyString,
   providerInstanceIds: Schema.Array(ProviderInstanceId),
-  allowedApps: Schema.Array(TrimmedNonEmptyString),
+  allowedApps: Schema.Array(AppRule),
+  appRulesVersion: Schema.optionalKey(Schema.Literal(1)),
 });
 export type ComputerUseConfig = typeof ComputerUseConfig.Type;
 export const ComputerUseProfilePolicy = Schema.Struct({
   enabled: Schema.Boolean,
-  allowedApps: Schema.Array(TrimmedNonEmptyString),
+  allowedApps: Schema.Array(AppRule),
+  appRulesVersion: Schema.optionalKey(Schema.Literal(1)),
   drivers: Schema.Array(TrimmedNonEmptyString),
 });
 export const ComputerLease = Schema.Struct({
@@ -35,6 +59,19 @@ export const ComputerUseState = Schema.Struct({
     "unavailable",
   ]),
   message: Schema.String,
+  availableApps: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ bundleId: Schema.String, name: Schema.String })),
+  ),
+  appCatalogTotal: Schema.optionalKey(Schema.Int),
+  checks: Schema.optionalKey(
+    Schema.Struct({
+      driver: Schema.Literals(["available", "unavailable", "unsupported-version"]),
+      accessibility: Schema.NullOr(Schema.Boolean),
+      screenRecording: Schema.NullOr(Schema.Boolean),
+      harnessesSelected: Schema.Boolean,
+      appsSelected: Schema.Boolean,
+    }),
+  ),
 });
 export const ComputerAction = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("click"), x: Schema.Number, y: Schema.Number }),

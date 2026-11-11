@@ -337,6 +337,7 @@ const make = Effect.gen(function* () {
       }
       connections.set(instanceId, ready);
       for (const skill of binding.profile.skills) {
+        if (skill.enabled === false) continue;
         if (skill.drivers.length && !skill.drivers.includes(instance.driver)) continue;
         items.push({
           name: skill.name,

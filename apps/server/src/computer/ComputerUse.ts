@@ -3,6 +3,7 @@ import { readAppliedProfile } from "../setupProfiles/appliedProfile.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
   ComputerUseConfig,
+  computerAppAllowed,
   ComputerLease,
   ComputerUseState,
   ComputerUseCommand,
@@ -38,6 +39,10 @@ export class ComputerUse extends Context.Service<
     readonly apps: (
       actor: ComputerActor,
     ) => Effect.Effect<typeof ComputerDriverResult.Type, ComputerUseError>;
+    readonly launch: (
+      actor: ComputerActor,
+      bundleId: string,
+    ) => Effect.Effect<typeof ComputerDriverResult.Type, ComputerUseError>;
     readonly acquire: (
       actor: ComputerActor,
       pid: number,
@@ -67,6 +72,7 @@ const App = Schema.Struct({
   pid: Schema.Int,
   bundle_id: Schema.optionalKey(Schema.String),
   executable: Schema.optionalKey(Schema.String),
+  name: Schema.optionalKey(Schema.String),
 });
 const decodeApps = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
@@ -101,6 +107,30 @@ const defaultConfig: ComputerUseConfig = {
   allowedApps: [],
 };
 const LEASE_MS = 120_000;
+// Cua Driver accepts physical keys plus modifiers, rather than shifted character glyphs.
+const SHIFTED_KEYS: Readonly<Record<string, string>> = {
+  "!": "1",
+  "@": "2",
+  "#": "3",
+  $: "4",
+  "%": "5",
+  "^": "6",
+  "&": "7",
+  "*": "8",
+  "(": "9",
+  ")": "0",
+  _: "-",
+  "+": "=",
+  "{": "[",
+  "}": "]",
+  "|": "\\",
+  ":": ";",
+  '"': "'",
+  "<": ",",
+  ">": ".",
+  "?": "/",
+  "~": "`",
+};
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const appliedProfile = readAppliedProfile.pipe(
@@ -125,6 +155,7 @@ const make = Effect.gen(function* () {
       enabled: policy.enabled,
       command: "cua-driver",
       allowedApps: policy.allowedApps,
+      ...(policy.appRulesVersion === 1 ? { appRulesVersion: 1 as const } : {}),
       providerInstanceIds: applied.instanceIds.filter(
         (id) =>
           !policy.drivers.length ||
@@ -184,7 +215,11 @@ const make = Effect.gen(function* () {
       !state.lease ||
       state.lease.id !== id ||
       state.lease.owner !== actor.id ||
-      !state.config.allowedApps.includes(state.lease.bundleId)
+      !computerAppAllowed(
+        state.config.allowedApps,
+        state.lease.bundleId,
+        state.config.appRulesVersion === 1,
+      )
     )
       return yield* new ComputerUseError({ reason: "expired" });
     return {
@@ -196,47 +231,108 @@ const make = Effect.gen(function* () {
   return ComputerUse.of({
     state: Effect.gen(function* () {
       const state = yield* read;
-      if (!state.config.enabled)
-        return {
-          ...state,
-          readiness: "disabled" as const,
-          message: "Enable computer use and select allowed harnesses and apps.",
-        };
       const permissions = yield* driver
         .call(state.config.command, "check_permissions", {
           prompt: false,
           probe_direct_capture: false,
         })
         .pipe(Effect.result);
-      if (permissions._tag === "Failure")
+      const selection = {
+        harnessesSelected: state.config.providerInstanceIds.length > 0,
+        appsSelected: state.config.allowedApps.length > 0,
+      };
+      if (permissions._tag === "Failure") {
+        const unsupported = permissions.failure.reason === "unsupported-version";
         return {
           ...state,
-          readiness: "unavailable" as const,
-          message:
-            "Install and start Cua Driver in this desktop session, then grant its OS permissions.",
+          readiness: state.config.enabled
+            ? unsupported
+              ? ("needs-install" as const)
+              : ("unavailable" as const)
+            : ("disabled" as const),
+          checks: {
+            driver: unsupported ? ("unsupported-version" as const) : ("unavailable" as const),
+            accessibility: null,
+            screenRecording: null,
+            ...selection,
+          },
+          message: unsupported
+            ? "Update Cua Driver to version 0.38 or newer on this environment."
+            : "Cua Driver could not be reached. Check its installation, executable path and desktop session on this environment.",
         };
+      }
       const text = permissions.success.content
         .filter((item) => item.type === "text")
         .map((item) => item.text)
         .join("\n");
       const parsed = yield* decodePermissions(text).pipe(Effect.result);
-      const ready =
-        parsed._tag === "Success" &&
-        parsed.success.accessibility &&
-        parsed.success.screen_recording;
+      const checks = {
+        driver: "available" as const,
+        accessibility: parsed._tag === "Success" ? parsed.success.accessibility : null,
+        screenRecording: parsed._tag === "Success" ? parsed.success.screen_recording : null,
+        ...selection,
+      };
+      const inventory = yield* driver.call(state.config.command, "list_apps", {}).pipe(
+        Effect.flatMap((result) =>
+          decodeApps(
+            result.content
+              .filter((item) => item.type === "text")
+              .map((item) => item.text)
+              .join("\n"),
+          ),
+        ),
+        Effect.option,
+      );
+      const discovered =
+        inventory._tag === "Some"
+          ? "apps" in inventory.value
+            ? inventory.value.apps
+            : inventory.value
+          : [];
+      const uniqueApplications = new Map<string, { bundleId: string; name: string }>();
+      for (const app of discovered) {
+        const bundleId = app.bundle_id ?? app.executable;
+        if (bundleId) uniqueApplications.set(bundleId, { bundleId, name: app.name ?? bundleId });
+      }
+      const appCatalog = {
+        availableApps: Array.from(uniqueApplications.values())
+          .sort((left, right) => left.name.localeCompare(right.name))
+          .slice(0, 1000),
+        appCatalogTotal: uniqueApplications.size,
+      };
+      if (!state.config.enabled)
+        return {
+          ...state,
+          ...appCatalog,
+          checks,
+          readiness: "disabled" as const,
+          message:
+            "Review the setup checks, choose allowed harnesses and apps, then enable computer use.",
+        };
+      if (!selection.harnessesSelected || !selection.appsSelected)
+        return {
+          ...state,
+          ...appCatalog,
+          checks,
+          readiness: "disabled" as const,
+          message: "Select at least one allowed harness and app to finish setup.",
+        };
+      const ready = checks.accessibility === true && checks.screenRecording === true;
       return {
         ...state,
+        ...appCatalog,
+        checks,
         readiness: ready ? ("ready" as const) : ("needs-permission" as const),
         message: ready
-          ? "OS permissions reported. Observing an allowed app verifies desktop capture."
-          : "Accessibility or Screen Recording is missing or could not be verified. Enable both for Cua Driver on this machine.",
+          ? "Permissions are available. An agent must observe an allowed app to verify capture."
+          : "Enable Accessibility and Screen Recording for Cua Driver on this machine, then check again.",
       };
     }),
     command: Effect.fn("ComputerUse.command")(function* (input) {
       if (
         input.operation === "configure" &&
         input.config.enabled &&
-        !input.config.allowedApps.length
+        (!input.config.allowedApps.length || !input.config.providerInstanceIds.length)
       )
         return yield* new ComputerUseError({ reason: "denied" });
       yield* administration.withPermits(1)(
@@ -276,7 +372,11 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) => new ComputerUseError({ reason: "driver", cause })),
       );
       const list = ("apps" in parsed ? parsed.apps : parsed).filter((app) =>
-        config.allowedApps.includes(app.bundle_id ?? app.executable ?? ""),
+        computerAppAllowed(
+          config.allowedApps,
+          app.bundle_id ?? app.executable ?? "",
+          config.appRulesVersion === 1,
+        ),
       );
       const windows = yield* Effect.forEach(
         list.filter((app) => app.pid > 0),
@@ -299,11 +399,36 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.mapError(storage));
       return { content: [{ type: "text" as const, text: output }] };
     }),
+    launch: Effect.fn("ComputerUse.launch")(function* (actor, bundleId) {
+      return yield* gate.withPermits(1)(
+        Effect.gen(function* () {
+          const state = yield* allowed(actor);
+          if (
+            !computerAppAllowed(
+              state.config.allowedApps,
+              bundleId,
+              state.config.appRulesVersion === 1,
+            )
+          )
+            return yield* new ComputerUseError({ reason: "denied" });
+          if (state.lease && (state.lease.owner !== actor.id || state.lease.bundleId !== bundleId))
+            return yield* new ComputerUseError({ reason: "busy" });
+          // Only the allowed identifier crosses this boundary; callers cannot supply launch arguments or URLs.
+          return yield* call(state.config.command, "launch_app", { bundle_id: bundleId });
+        }),
+      );
+    }),
     acquire: Effect.fn("ComputerUse.acquire")(function* (actor, pid, bundleId, windowId) {
       return yield* gate.withPermits(1)(
         Effect.gen(function* () {
           const state = yield* allowed(actor);
-          if (!state.config.allowedApps.includes(bundleId))
+          if (
+            !computerAppAllowed(
+              state.config.allowedApps,
+              bundleId,
+              state.config.appRulesVersion === 1,
+            )
+          )
             return yield* new ComputerUseError({ reason: "denied" });
           if (state.lease) {
             if (
@@ -389,13 +514,16 @@ const make = Effect.gen(function* () {
             case "type":
               yield* call(config.command, "type_text", { ...input, text: action.text });
               break;
-            case "key":
+            case "key": {
+              const physicalKey = SHIFTED_KEYS[action.key];
+              const modifiers = action.modifiers ?? [];
               yield* call(config.command, "press_key", {
                 ...input,
-                key: action.key,
-                modifiers: action.modifiers ?? [],
+                key: physicalKey ?? action.key,
+                modifiers: physicalKey ? Array.from(new Set([...modifiers, "shift"])) : modifiers,
               });
               break;
+            }
             case "scroll":
               yield* call(config.command, "scroll", {
                 ...input,

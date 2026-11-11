@@ -240,6 +240,32 @@ it.effect(
         yield* profiles.reconcile(() => Effect.void);
         assert.isFalse(yield* fs.exists(`${root}/claude/skills/report/SKILL.md`));
         assert.isNull((yield* profiles.state).binding!.error);
+        yield* profiles.command({
+          operation: "publish",
+          profile: {
+            ...profile,
+            expectedRevision: 3,
+            skills: changed.skills.map((skill) => ({ ...skill, enabled: false })),
+          },
+        });
+        yield* profiles.reconcile(() => Effect.void);
+        assert.isFalse(yield* fs.exists(`${root}/claude/skills/report/SKILL.md`));
+        assert.isFalse(
+          (yield* profiles.state).binding!.items.some((item) => item.kind === "skill"),
+        );
+        yield* profiles.command({
+          operation: "publish",
+          profile: {
+            ...profile,
+            expectedRevision: 4,
+            skills: changed.skills.map((skill) => ({ ...skill, enabled: true })),
+          },
+        });
+        yield* profiles.reconcile(() => Effect.void);
+        assert.strictEqual(
+          yield* fs.readFileString(`${root}/claude/skills/report/guide.md`),
+          "New published guide",
+        );
       }),
     ),
 );

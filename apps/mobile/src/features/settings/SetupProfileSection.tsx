@@ -1,3 +1,4 @@
+import { setupProfilePresentation } from "@t3tools/client-runtime/setup-profile-presentation";
 import { useAtomValue } from "@effect/atom-react";
 import { linkableMachines } from "@t3tools/client-runtime/link-request";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
@@ -39,6 +40,8 @@ export function SetupProfileSection({ environmentId }: { readonly environmentId:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const binding = state.data?.binding;
+  const presentation = setupProfilePresentation(binding ?? null);
+  const [showItems, setShowItems] = useState(false);
   const run = async (input: Parameters<typeof command>[0]["input"]) => {
     setBusy(true);
     setError(null);
@@ -70,32 +73,41 @@ export function SetupProfileSection({ environmentId }: { readonly environmentId:
             Applied revision {binding.appliedRevision} · {binding.enabled ? "Sync on" : "Sync off"}
           </Text>
         ) : null}
-        {state.error || error || binding?.error ? (
-          <Text className="text-sm text-danger-foreground">
-            {error ?? state.error ?? binding?.error}
-          </Text>
+        <Text className="text-sm text-foreground">{presentation.title}</Text>
+        <Text className="text-sm text-foreground-muted">{presentation.description}</Text>
+        {state.error || error ? (
+          <Text className="text-sm text-danger-foreground">{error ?? state.error}</Text>
         ) : null}
-        {binding?.items.map((item) => (
-          <Text
-            key={`${item.instanceId}:${item.kind}:${item.name}`}
-            className="text-sm text-foreground-muted"
-          >
-            {item.name} · {item.status}
-          </Text>
-        ))}
+        {showItems
+          ? binding?.items.map((item) => (
+              <Text
+                key={`${item.instanceId}:${item.kind}:${item.name}`}
+                className="text-sm text-foreground-muted"
+              >
+                {item.name} · {item.status.replaceAll("-", " ")}
+              </Text>
+            ))
+          : null}
       </View>
       {binding ? (
         <>
+          <ListActionRow
+            label={showItems ? "Hide setup items" : "Review MCP connections and skills"}
+            description={`${presentation.configured} configured · ${presentation.verified} verified · ${presentation.needsAttention} need attention`}
+            onPress={() => setShowItems(!showItems)}
+          />
           <ListActionRow
             label={binding.enabled ? "Pause setup sync" : "Resume setup sync"}
             disabled={!allowed || busy}
             onPress={() => void run({ operation: "pause", paused: binding.enabled })}
           />
-          <ListActionRow
-            label="Retry setup"
-            disabled={!allowed || busy}
-            onPress={() => void run({ operation: "reconcile" })}
-          />
+          {presentation.canRetry ? (
+            <ListActionRow
+              label="Retry setup"
+              disabled={!allowed || busy}
+              onPress={() => void run({ operation: "reconcile" })}
+            />
+          ) : null}
           <ListActionRow
             label="Detach and keep setup"
             disabled={!allowed || busy}

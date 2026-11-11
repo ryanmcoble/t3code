@@ -30,6 +30,8 @@ export const layerStandard = McpToolAccess.toLayer(ComputerStandardToolkit, {
       const caller = yield* actor;
       const command = input.command;
       switch (command.operation) {
+        case "launch":
+          return yield* computer.launch(caller, command.bundleId);
         case "acquire":
           return yield* computer.acquire(caller, command.pid, command.bundleId, command.windowId);
         case "act":

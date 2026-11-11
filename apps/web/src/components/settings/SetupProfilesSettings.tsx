@@ -1,3 +1,6 @@
+import { Switch } from "../ui/switch";
+import { SetupProfileBindingStatus } from "./SetupProfileBindingStatus";
+import { Checkbox } from "../ui/checkbox";
 import { randomUUID } from "~/lib/utils";
 import { SetupMcpEditor } from "./SetupMcpEditor";
 import { SetupProfileEnrollment } from "./SetupProfileEnrollment";
@@ -82,8 +85,6 @@ export function SetupProfilesSettings({
   });
   const [draftId, setDraftId] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
-  const [secretName, setSecretName] = useState("");
-  const [secretValue, setSecretValue] = useState("");
   const providers = config?.providers ?? [];
   type SetupCommandInput = Parameters<typeof run>[0]["input"];
   const execute = async (input: SetupCommandInput | ReadonlyArray<SetupCommandInput>) => {
@@ -122,7 +123,7 @@ export function SetupProfilesSettings({
   };
   if (!supported)
     return (
-      <SettingsSection title={`Setup profiles · ${label}`}>
+      <SettingsSection id="setup-mcp-skills" title={`Setup profiles · ${label}`}>
         <SettingsRow
           title="Server update required"
           description="This environment does not support setup profiles yet."
@@ -131,177 +132,43 @@ export function SetupProfilesSettings({
     );
   const binding = state.data?.binding;
   return (
-    <SettingsSection title={`Setup profiles · ${label}`}>
+    <SettingsSection id="setup-mcp-skills" title={`Setup profiles · ${label}`}>
       <div className="space-y-4 px-4 py-3">
         <p className="text-sm text-muted-foreground">
-          Share selected MCP connections and complete skill packages across environments. Each
-          environment keeps its own account sign-ins.
+          Share MCP connections and skills. Account sign-ins stay on each machine.
         </p>
         {state.error ? <p role="alert">{state.error}</p> : null}
         {error ? <p role="alert">{error}</p> : null}
         {notice ? <p role="status">{notice}</p> : null}
         {binding ? (
-          <div className="space-y-2 rounded-lg border p-3">
-            <p className="text-sm font-medium">
-              {binding.profile.name} · revision {binding.profile.revision}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Applied revision {binding.appliedRevision} ·{" "}
-              {binding.detached
-                ? "Detached; current setup retained"
-                : binding.enabled
-                  ? "Automatic synchronization on"
-                  : "Automatic synchronization off"}
-            </p>
-            {binding.error ? (
-              <p role="alert" className="text-sm">
-                {binding.error}
-              </p>
-            ) : null}
-            <details className="space-y-2">
-              <summary className="cursor-pointer text-sm">
-                Setup items ({binding.items.length})
-              </summary>
-              {binding.items.map((item) => (
-                <p className="text-xs" key={`${item.instanceId}:${item.kind}:${item.name}`}>
-                  {item.instanceId} · {item.name}: {item.status} · {item.message}
-                </p>
-              ))}
-            </details>
-            {(binding.conflicts?.length ?? 0) > 0 ? (
-              <details className="space-y-2">
-                <summary className="cursor-pointer text-sm">
-                  Review local file conflicts ({binding.conflicts!.length})
-                </summary>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!allowed || busy}
-                  onClick={() =>
-                    void execute(
-                      binding.conflicts!.map((path): SetupCommandInput => ({
-                        operation: "resolve",
-                        path,
-                        resolution: "use-profile",
-                      })),
-                    )
-                  }
-                >
-                  Use profile for all listed conflicts
-                </Button>
-                {(binding.conflicts ?? []).map((path) => (
-                  <div key={path} className="space-y-1 rounded border p-2">
-                    <p className="break-all text-xs">{path}</p>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={!allowed || busy}
-                        onClick={() =>
-                          void execute({ operation: "resolve", path, resolution: "keep-local" })
-                        }
-                      >
-                        Keep local
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={!allowed || busy}
-                        onClick={() =>
-                          void execute({ operation: "resolve", path, resolution: "use-profile" })
-                        }
-                      >
-                        Use profile
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </details>
-            ) : null}
-            {binding.items.some((item) => item.status === "needs-secret") ? (
-              <div className="space-y-2">
-                <p className="text-sm">Bind a credential on this environment</p>
-                <Input
-                  aria-label="Credential reference name"
-                  value={secretName}
-                  onChange={(e) => setSecretName(e.target.value)}
-                  placeholder="Secret reference name"
-                />
-                <Input
-                  aria-label="Credential value"
-                  type="password"
-                  value={secretValue}
-                  onChange={(e) => setSecretValue(e.target.value)}
-                />
-                <Button
-                  size="sm"
-                  disabled={!allowed || busy || !secretName || !secretValue}
-                  onClick={async () => {
-                    if (
-                      await execute({
-                        operation: "bind-secret",
-                        name: secretName,
-                        secret: secretValue,
-                      })
-                    )
-                      setSecretValue("");
-                  }}
-                >
-                  Save credential locally
-                </Button>
-              </div>
-            ) : null}
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => state.refresh()}>
-                Refresh status
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!allowed || busy}
-                onClick={() => void execute({ operation: "reconcile" })}
-              >
-                Retry setup
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!allowed || busy}
-                onClick={() => void execute({ operation: "pause", paused: binding.enabled })}
-              >
-                {binding.enabled ? "Pause sync" : "Resume sync"}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!allowed || busy}
-                onClick={() => void execute({ operation: "detach", removeManaged: false })}
-              >
-                Detach and keep setup
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={!allowed || busy}
-                onClick={() => void execute({ operation: "detach", removeManaged: true })}
-              >
-                Remove managed setup
-              </Button>
-            </div>
-          </div>
+          <SetupProfileBindingStatus
+            binding={binding}
+            label={label}
+            allowed={allowed}
+            busy={busy}
+            providerLabels={
+              new Map(
+                providers.map((provider) => [
+                  provider.instanceId,
+                  provider.displayName ?? provider.driver,
+                ]),
+              )
+            }
+            execute={execute}
+            refresh={state.refresh}
+          />
         ) : (
           <p className="text-sm">No setup profile applied.</p>
         )}
-        <fieldset disabled={!allowed || busy} className="space-y-2">
-          <legend className="text-sm font-medium">Target harnesses</legend>
+        <fieldset disabled={!allowed || busy} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <legend className="text-sm font-medium">Apply this setup to</legend>
           {providers.map((p) => (
             <label className="flex items-center gap-2 text-sm" key={p.instanceId}>
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={instanceIds.includes(p.instanceId)}
-                onChange={(e) =>
+                onCheckedChange={(checked) =>
                   setInstanceIds(
-                    e.target.checked
+                    checked
                       ? [...instanceIds, p.instanceId]
                       : instanceIds.filter((id) => id !== p.instanceId),
                   )
@@ -450,6 +317,17 @@ export function SetupProfilesSettings({
                 <span>
                   {skill.name} · {skill.files.length} files
                 </span>
+                <Switch
+                  aria-label={`Enable skill ${skill.name}`}
+                  checked={skill.enabled !== false}
+                  onCheckedChange={(enabled) =>
+                    setSkills(
+                      skills.map((entry) =>
+                        entry.name === skill.name ? { ...entry, enabled } : entry,
+                      ),
+                    )
+                  }
+                />
                 <Button
                   size="sm"
                   variant="ghost"

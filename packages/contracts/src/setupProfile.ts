@@ -37,6 +37,7 @@ export const SetupSkillFile = Schema.Struct({
 });
 export const SetupSkill = Schema.Struct({
   name: Name,
+  enabled: Schema.optionalKey(Schema.Boolean),
   files: Schema.Array(SetupSkillFile),
   drivers: Schema.Array(Name),
 });

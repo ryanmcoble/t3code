@@ -1,6 +1,4 @@
-import { SharedMemorySettings } from "./SharedMemorySettings";
-import { ComputerUseSettings } from "./ComputerUseSettings";
-import { SetupProfilesSettings } from "./SetupProfilesSettings";
+import { EnvironmentSetupSettings } from "./EnvironmentSetupSettings";
 import { SessionPermissions } from "./SessionPermissions";
 import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
@@ -1537,27 +1535,7 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
           isSearchTarget={index === 0}
         />
       ))}
-      {loadBalancingEnvironments.map((environment) => (
-        <SetupProfilesSettings
-          key={environment.environmentId}
-          environmentId={environment.environmentId}
-          label={environment.label}
-        />
-      ))}
-      {loadBalancingEnvironments.map((environment) => (
-        <SharedMemorySettings
-          key={`memory-${environment.environmentId}`}
-          environmentId={environment.environmentId}
-          label={environment.label}
-        />
-      ))}
-      {loadBalancingEnvironments.map((environment) => (
-        <ComputerUseSettings
-          key={`computer-${environment.environmentId}`}
-          environmentId={environment.environmentId}
-          label={environment.label}
-        />
-      ))}
+      <EnvironmentSetupSettings environments={loadBalancingEnvironments} />
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <PullRequestRoutingSettings environments={loadBalancingEnvironments} />
     </SettingsPageContainer>
