@@ -51,6 +51,10 @@ interface Transfer {
 export class ProjectFolderTransfer extends Context.Service<
   ProjectFolderTransfer,
   {
+    readonly validateEntries: (input: {
+      readonly entries: ReadonlyArray<ProjectFolderEntry>;
+      readonly contentPolicy: ProjectFolderContentPolicy;
+    }) => Effect.Effect<void, ProjectFolderTransferError>;
     readonly status: (input: {
       cwd: string;
     }) => Effect.Effect<ProjectFolderStatusResult, ProjectFolderTransferError>;
@@ -931,6 +935,15 @@ const make = Effect.gen(function* () {
   );
 
   return ProjectFolderTransfer.of({
+    validateEntries: Effect.fn("ProjectFolderTransfer.validateEntries")((input) =>
+      Effect.try({
+        try: () => validate(input.entries, input.contentPolicy),
+        catch: (cause) =>
+          isTransferError(cause)
+            ? cause
+            : new ProjectFolderTransferError({ reason: "invalid_path", cause }),
+      }),
+    ),
     exportEnd,
     status,
     getSync,

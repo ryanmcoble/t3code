@@ -63,11 +63,13 @@ const make = Effect.gen(function* () {
   const gate = yield* Semaphore.make(1);
   const snapshots = new Map<string, Snapshot>();
   const ttl = 5 * 60_000;
-  const hash = (value: string) =>
-    crypto.digest("SHA-256", new TextEncoder().encode(value)).pipe(
-      Effect.map(Hex.encode),
-      Effect.mapError(() => new SharedProjectContentError({ reason: "storage" })),
-    );
+  const hash = (value: string | Uint8Array) =>
+    crypto
+      .digest("SHA-256", typeof value === "string" ? new TextEncoder().encode(value) : value)
+      .pipe(
+        Effect.map(Hex.encode),
+        Effect.mapError(() => new SharedProjectContentError({ reason: "storage" })),
+      );
   const close = Effect.fn("SharedProjectContentSource.close")(function* (id: string) {
     const snapshot = snapshots.get(id);
     snapshots.delete(id);
@@ -146,7 +148,15 @@ const make = Effect.gen(function* () {
                 observerId: `${input.projectId}/${rootId}`,
                 contentPolicy: root.contentPolicy,
               })
-              .pipe(Effect.mapError(() => new SharedProjectContentError({ reason: "transfer" })));
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new SharedProjectContentError({
+                      reason:
+                        error.reason === "observation_limit" ? "observation-limit" : "transfer",
+                    }),
+                ),
+              );
             const revision = {
               manifestRevision: manifest.revision,
               bindingRevision: binding.revision,
@@ -179,7 +189,10 @@ const make = Effect.gen(function* () {
               const encoded = yield* encodeEntries(entries).pipe(
                 Effect.mapError(() => new SharedProjectContentError({ reason: "storage" })),
               );
-              const digest = yield* hash(encoded);
+              const bytes = new TextEncoder().encode(encoded);
+              if (bytes.length > 32 * 1024 ** 2)
+                return yield* new SharedProjectContentError({ reason: "quota" });
+              const digest = yield* hash(bytes);
               const id = yield* crypto
                 .randomUUIDv4()
                 .pipe(Effect.mapError(() => new SharedProjectContentError({ reason: "storage" })));

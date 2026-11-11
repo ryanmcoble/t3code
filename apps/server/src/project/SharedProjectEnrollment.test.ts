@@ -43,7 +43,11 @@ const descriptor: ExecutionEnvironmentDescriptor = {
   label: "Owner",
   platform: { os: "darwin", arch: "arm64" },
   serverVersion: "test",
-  capabilities: { repositoryIdentity: false, sharedProjectEnrollment: 1 },
+  capabilities: {
+    repositoryIdentity: false,
+    sharedProjectEnrollment: 1,
+    sharedProjectFileContent: 1,
+  },
 };
 const connect = {
   operation: "connect",
@@ -82,6 +86,7 @@ it.effect(
         revoke: false,
         access: "files",
       });
+      assert.equal((yield* service.serve(manifest.id, member, metadata.token!)).id, manifest.id);
       assert.equal(
         (yield* service.authorizeContent({ ...request, token: files.token! })).id,
         manifest.id,
@@ -99,7 +104,34 @@ it.effect(
         access: "repository-history",
       });
       assert.equal(
-        (yield* service.authorizeContent({ ...request, token: history.token!, history: true })).id,
+        (yield* service.authorizeContent({ ...request, token: files.token! })).id,
+        manifest.id,
+      );
+      yield* service.grant({
+        sharedProjectId: manifest.id,
+        destinationEnvironmentId: member,
+        revoke: true,
+        access: "repository-history",
+      });
+      assert.equal(
+        (yield* service
+          .authorizeContent({ ...request, token: history.token!, history: true })
+          .pipe(Effect.result))._tag,
+        "Failure",
+      );
+      assert.equal(
+        (yield* service.authorizeContent({ ...request, token: files.token! })).id,
+        manifest.id,
+      );
+      const historyAgain = yield* service.grant({
+        sharedProjectId: manifest.id,
+        destinationEnvironmentId: member,
+        revoke: false,
+        access: "repository-history",
+      });
+      assert.equal(
+        (yield* service.authorizeContent({ ...request, token: historyAgain.token!, history: true }))
+          .id,
         manifest.id,
       );
       yield* service.grant({
@@ -108,8 +140,9 @@ it.effect(
         revoke: true,
       });
       assert.equal(
-        (yield* service.authorizeContent({ ...request, token: history.token! }).pipe(Effect.result))
-          ._tag,
+        (yield* service
+          .authorizeContent({ ...request, token: historyAgain.token! })
+          .pipe(Effect.result))._tag,
         "Failure",
       );
     }).pipe(

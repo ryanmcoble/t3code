@@ -160,6 +160,7 @@ const make = Effect.gen(function* () {
   const fetchManifest = Effect.fn("SharedProjectEnrollment.fetchManifest")(function* (
     binding: SharedProjectSubscription,
     token: string,
+    requireContent = false,
   ) {
     const url = yield* origin(binding.sourceUrl);
     const descriptor = yield* http.get(`${url}/.well-known/t3/environment`).pipe(
@@ -178,6 +179,8 @@ const make = Effect.gen(function* () {
     if (descriptor.environmentId !== binding.ownerEnvironmentId) return yield* denied();
     if (descriptor.capabilities.sharedProjectEnrollment !== 1)
       return yield* new SharedProjectError({ reason: "unsupported" });
+    if (requireContent && descriptor.capabilities.sharedProjectFileContent !== 1)
+      return yield* new SharedProjectError({ reason: "unsupported-content" });
     const manifest = yield* http
       .execute(
         HttpClientRequest.get(
@@ -246,7 +249,7 @@ const make = Effect.gen(function* () {
           if (Option.isNone(saved)) return yield* denied();
           const token = new TextDecoder().decode(saved.value);
           if (request.operation === "observe" || request.operation === "start")
-            yield* fetchManifest(binding, token);
+            yield* fetchManifest(binding, token, true);
           const url = yield* origin(binding.sourceUrl);
           const body = yield* HttpClientRequest.post(
             `${url}/api/shared-projects/${encodeURIComponent(projectId)}/content`,
@@ -302,7 +305,7 @@ const make = Effect.gen(function* () {
           )
             return yield* denied();
           if (input.revoke) {
-            yield* sql`DELETE FROM shared_project_grants WHERE project_id=${project.id} AND destination_id=${input.destinationEnvironmentId}`.pipe(
+            yield* sql`DELETE FROM shared_project_grants WHERE project_id=${project.id} AND destination_id=${input.destinationEnvironmentId} AND (${input.access ?? null} IS NULL OR access=${input.access ?? null})`.pipe(
               Effect.mapError(storage),
             );
             return { token: null };
@@ -312,9 +315,16 @@ const make = Effect.gen(function* () {
             Effect.mapError(storage),
           );
           const hash = yield* digest(token);
-          yield* sql`INSERT INTO shared_project_grants(project_id,destination_id,token_hash,access) VALUES(${project.id},${input.destinationEnvironmentId},${hash},${input.access ?? "metadata"}) ON CONFLICT(project_id,destination_id) DO UPDATE SET token_hash=excluded.token_hash,access=excluded.access`.pipe(
-            Effect.mapError(storage),
-          );
+          yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                // Legacy replacement still revokes all scopes; explicit scopes rotate independently.
+                if (input.access === undefined)
+                  yield* sql`DELETE FROM shared_project_grants WHERE project_id=${project.id} AND destination_id=${input.destinationEnvironmentId}`;
+                yield* sql`INSERT INTO shared_project_grants(project_id,destination_id,token_hash,access) VALUES(${project.id},${input.destinationEnvironmentId},${hash},${input.access ?? "metadata"}) ON CONFLICT(project_id,destination_id,access) DO UPDATE SET token_hash=excluded.token_hash`;
+              }),
+            )
+            .pipe(Effect.mapError(storage));
           return { token };
         }),
       ),
@@ -351,6 +361,7 @@ const make = Effect.gen(function* () {
               observedRevision: previous?.observedRevision ?? 0,
               lastCheckedAt: null,
               error: null,
+              receiveFiles: input.receiveFiles ?? false,
             };
             // Validate the owner and grant before replacing the stored credential.
             const revision = yield* fetchManifest(binding, input.token);
@@ -376,7 +387,9 @@ const make = Effect.gen(function* () {
               );
               if (binding && !binding.detached)
                 yield* projects.unbind(input.sharedProjectId, binding.revision);
-            } else if (input.operation === "pause")
+            } else if (input.operation === "receive-files")
+              yield* save({ ...previous, receiveFiles: input.enabled });
+            else if (input.operation === "pause")
               yield* save({ ...previous, paused: input.paused });
             else yield* refresh(previous);
           }

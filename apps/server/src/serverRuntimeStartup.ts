@@ -1,4 +1,5 @@
 import * as SharedProjectEnrollment from "./project/SharedProjectEnrollment.ts";
+import * as SharedProjectContentReplica from "./project/SharedProjectContentReplica.ts";
 import * as SharedMemory from "./memory/SharedMemory.ts";
 import * as MemoryCaptureWorker from "./memory/MemoryCaptureWorker.ts";
 import * as Option from "effect/Option";
@@ -568,6 +569,16 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
               Effect.provideService(
                 SharedProjectEnrollment.SharedProjectEnrollment,
                 projectEnrollment.value,
+              ),
+            );
+          const projectReplica = yield* Effect.serviceOption(
+            SharedProjectContentReplica.SharedProjectContentReplica,
+          );
+          if (Option.isSome(projectReplica))
+            yield* SharedProjectContentReplica.start.pipe(
+              Effect.provideService(
+                SharedProjectContentReplica.SharedProjectContentReplica,
+                projectReplica.value,
               ),
             );
           const setupProfiles = yield* Effect.serviceOption(SetupProfiles.SetupProfiles);

@@ -1,5 +1,7 @@
 import * as SharedProjectEnrollment from "./project/SharedProjectEnrollment.ts";
 import * as SharedProjectContentSource from "./project/SharedProjectContentSource.ts";
+import * as SharedProjectContentReplica from "./project/SharedProjectContentReplica.ts";
+import * as SharedProjectContentStore from "./project/SharedProjectContentStore.ts";
 import * as WorkspaceMutationGuard from "./workspace/WorkspaceMutationGuard.ts";
 import * as SharedProjectHttp from "./project/sharedProjectHttp.ts";
 import * as ProjectStoreV2 from "./orchestration-v2/ProjectStore.ts";
@@ -469,6 +471,11 @@ const layerTerminal = TerminalManager.layer.pipe(
   Layer.provide(layerPortScanner),
   Layer.provide(layerNativeTelemetry),
 );
+const layerWorkspaceMutationGuard = WorkspaceMutationGuard.layer.pipe(
+  Layer.provide(layerTerminal),
+  Layer.provide(ProjectionStoreV2.layer),
+  Layer.provide(ProjectStore.layer),
+);
 
 const layerPreview = Layer.empty.pipe(
   Layer.provideMerge(PreviewManager.layer),
@@ -495,13 +502,7 @@ const layerWorkspace = Layer.mergeAll(
   layerWorkspaceFileSystem,
   ProjectFolderTransfer.layer.pipe(
     Layer.provide(layerKnownWorkspaces),
-    Layer.provide(
-      WorkspaceMutationGuard.layer.pipe(
-        Layer.provide(layerTerminal),
-        Layer.provide(ProjectionStoreV2.layer),
-        Layer.provide(ProjectStore.layer),
-      ),
-    ),
+    Layer.provide(layerWorkspaceMutationGuard),
   ),
 );
 
@@ -735,6 +736,12 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
           }),
         ),
       ),
+    ),
+  ),
+  Layer.provideMerge(
+    SharedProjectContentReplica.layer.pipe(
+      Layer.provide(SharedProjectContentStore.layer),
+      Layer.provide(layerWorkspaceMutationGuard),
     ),
   ),
   Layer.provideMerge(SharedProjectContentSource.layer.pipe(Layer.provide(ProjectStore.layer))),

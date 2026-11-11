@@ -59,6 +59,7 @@ export const SharedProjectSubscription = Schema.Struct({
   observedRevision: NonNegativeInt,
   lastCheckedAt: Schema.NullOr(NonNegativeInt),
   error: Schema.NullOr(Schema.String),
+  receiveFiles: Schema.optionalKey(Schema.Boolean),
 });
 export type SharedProjectSubscription = typeof SharedProjectSubscription.Type;
 export const SharedProjectEnrollmentState = Schema.Struct({
@@ -83,11 +84,17 @@ export const SharedProjectSubscriptionControl = Schema.Union([
 ]);
 export const SharedProjectEnrollmentCommand = Schema.Union([
   Schema.Struct({
+    operation: Schema.Literal("receive-files"),
+    sharedProjectId: Identifier,
+    enabled: Schema.Boolean,
+  }),
+  Schema.Struct({
     operation: Schema.Literal("connect"),
     sharedProjectId: Identifier,
     ownerEnvironmentId: EnvironmentId,
     sourceUrl: TrimmedNonEmptyString,
     token: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+    receiveFiles: Schema.optionalKey(Schema.Boolean),
   }),
   SharedProjectSubscriptionControl,
 ]);
@@ -134,11 +141,14 @@ export class SharedProjectError extends Schema.TaggedError<SharedProjectError>()
       "denied",
       "unreachable",
       "unsupported",
+      "unsupported-content",
     ]),
   },
 ) {
   override get message(): string {
     switch (this.reason) {
+      case "unsupported-content":
+        return "Update the project owner to a version that supports shared file receiving.";
       case "denied":
         return "This project subscription is not authorized. Check membership and renew its grant on the owner.";
       case "unreachable":

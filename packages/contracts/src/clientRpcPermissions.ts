@@ -100,11 +100,26 @@ export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
+const decodeFileReceiving = Schema.decodeUnknownSync(
+  Schema.Struct({
+    operation: Schema.String,
+    receiveFiles: Schema.optionalKey(Schema.Boolean),
+    enabled: Schema.optionalKey(Schema.Boolean),
+  }),
+);
 
 export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === WS_METHODS.sharedProjectEnrollmentCommand && input !== undefined) {
+    const payload = decodeFileReceiving(input);
+    if (
+      (payload.operation === "connect" && payload.receiveFiles) ||
+      (payload.operation === "receive-files" && payload.enabled)
+    )
+      return [AuthSettingsWriteScope, AuthFilesystemWriteScope];
+  }
   if (method === WS_METHODS.setupProfilesGrant || method === WS_METHODS.memoryGrant)
     return [AuthAccessWriteScope, AuthSettingsWriteScope];
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {

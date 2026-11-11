@@ -23,6 +23,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
+import { withWorkspaceLeases } from "../workspace/workspaceLease.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 export class SharedProjects extends Context.Service<
@@ -105,6 +106,14 @@ const make = Effect.gen(function* () {
     },
     Effect.mapError(() => new SharedProjectError({ reason: "storage" })),
   );
+  const withBoundRoots = Effect.fn("SharedProjects.withBoundRoots")(function* <A, E, R>(
+    id: string | undefined,
+    effect: Effect.Effect<A, E, R>,
+  ) {
+    const binding = id ? yield* readBinding(id) : null;
+    // Acquire roots before the SQL transaction; file installation holds roots while saving receipts.
+    return yield* withWorkspaceLeases(binding?.roots.map((root) => root.path) ?? [], effect);
+  });
   const state = Effect.gen(function* () {
     const rows = yield* sql<{
       readonly manifest: string;
@@ -164,6 +173,7 @@ const make = Effect.gen(function* () {
                 ? error
                 : new SharedProjectError({ reason: "storage" }),
             ),
+            (effect) => withBoundRoots(manifest.id, effect),
           ),
       ),
     ),
@@ -210,6 +220,7 @@ const make = Effect.gen(function* () {
                 ? error
                 : new SharedProjectError({ reason: "storage" }),
             ),
+            (effect) => withBoundRoots(input.id, effect),
           ),
       );
     }),
@@ -293,10 +304,13 @@ const make = Effect.gen(function* () {
             Effect.mapError(() => new SharedProjectError({ reason: "storage" })),
           );
           const now = yield* Clock.currentTimeMillis;
-          const saved = yield* sql<{
-            readonly id: string;
-          }>`INSERT INTO shared_project_bindings(project_id,binding_json,binding_revision,updated_at) VALUES(${manifest.id},${encoded},${binding.revision},${now}) ON CONFLICT(project_id) DO UPDATE SET binding_json=excluded.binding_json,binding_revision=excluded.binding_revision,updated_at=excluded.updated_at WHERE shared_project_bindings.binding_revision=${input.expectedBindingRevision} RETURNING project_id AS id`.pipe(
-            Effect.mapError(() => new SharedProjectError({ reason: "storage" })),
+          const saved = yield* withWorkspaceLeases(
+            [...roots, ...(previous?.roots ?? [])].map((root) => root.path),
+            sql<{
+              readonly id: string;
+            }>`INSERT INTO shared_project_bindings(project_id,binding_json,binding_revision,updated_at) VALUES(${manifest.id},${encoded},${binding.revision},${now}) ON CONFLICT(project_id) DO UPDATE SET binding_json=excluded.binding_json,binding_revision=excluded.binding_revision,updated_at=excluded.updated_at WHERE shared_project_bindings.binding_revision=${input.expectedBindingRevision} RETURNING project_id AS id`.pipe(
+              Effect.mapError(() => new SharedProjectError({ reason: "storage" })),
+            ),
           );
           if (!saved.length) return yield* new SharedProjectError({ reason: "revision" });
           return binding;
@@ -322,10 +336,13 @@ const make = Effect.gen(function* () {
             Effect.mapError(() => new SharedProjectError({ reason: "storage" })),
           );
           const now = yield* Clock.currentTimeMillis;
-          const saved = yield* sql<{
-            readonly id: string;
-          }>`UPDATE shared_project_bindings SET binding_json=${encoded},binding_revision=${binding.revision},updated_at=${now} WHERE project_id=${id} AND binding_revision=${expectedRevision} RETURNING project_id AS id`.pipe(
-            Effect.mapError(() => new SharedProjectError({ reason: "storage" })),
+          const saved = yield* withWorkspaceLeases(
+            previous.roots.map((root) => root.path),
+            sql<{
+              readonly id: string;
+            }>`UPDATE shared_project_bindings SET binding_json=${encoded},binding_revision=${binding.revision},updated_at=${now} WHERE project_id=${id} AND binding_revision=${expectedRevision} RETURNING project_id AS id`.pipe(
+              Effect.mapError(() => new SharedProjectError({ reason: "storage" })),
+            ),
           );
           if (!saved.length) return yield* new SharedProjectError({ reason: "revision" });
         }),

@@ -69,11 +69,17 @@ export class SharedProjectContentError extends Schema.TaggedError<SharedProjectC
       "quota",
       "transfer",
       "storage",
+      "observation-limit",
+      "activity-unavailable",
     ]),
   },
 ) {
   override get message(): string {
     switch (this.reason) {
+      case "observation-limit":
+        return "Too many shared folders are being watched. Pause unused shared projects and retry.";
+      case "activity-unavailable":
+        return "Project content is waiting because T3 could not verify workspace activity. Check machine access and retry.";
       case "unmapped":
         return "Review the project's local folder mappings and unpause preparation first.";
       case "stale":
@@ -85,11 +91,11 @@ export class SharedProjectContentError extends Schema.TaggedError<SharedProjectC
       case "session":
         return "The project transfer session expired or belongs to another recipient. Start a new snapshot.";
       case "quota":
-        return "The project snapshot exceeds the transfer limits. Split the project into smaller roots.";
+        return "Project content reached a transfer or local storage limit. Review project size and retained content before retrying.";
       case "transfer":
         return "Project content changed or could not be transferred. Local files are preserved; retry after checking folder access.";
       case "storage":
-        return "The project content receipt could not be saved or read.";
+        return "Project content data or its receipt could not be saved or read. Check local storage and folder access.";
     }
   }
 }
