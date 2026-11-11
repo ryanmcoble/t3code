@@ -81,6 +81,14 @@ local versions or use saved owner versions; either choice preserves the recovery
 copies. If files changed since the saved conflict, refresh before resolving it.
 Stopping file receiving preserves local files and recovery copies.
 
+Agents use `t3_shared_project_files` to inspect preparation and conflict paths, and
+`t3_shared_project_files_prepare` to refresh or resolve reviewed conflicts. The CLI
+uses the same server services: `t3 shared-project files status <project-id>`,
+`conflicts <project-id> <root-id>`, `refresh <project-id> <root-id>`, and
+`resolve <project-id> <root-id> --generation <reviewed-generation> --choice local|owner`.
+Use `--base-dir` for an isolated T3 home or `--environment` for a linked machine.
+File receiving must already be enabled; these commands do not grant new access.
+
 Pause stops background definition updates. Refresh checks the owner immediately.
 Disconnect removes the local subscription credential and detaches local mappings,
 preserving the folders and cached project history. The owner can revoke a member's

@@ -1,4 +1,5 @@
 import { SharedProjectEnrollment } from "../project/SharedProjectEnrollment.ts";
+import { SharedProjectContentReplica } from "../project/SharedProjectContentReplica.ts";
 import { ContainerMonitor } from "../containers/ContainerMonitor.ts";
 import { ManagedContainers } from "../containers/ManagedContainers.ts";
 import { SharedProjects } from "../project/SharedProjects.ts";
@@ -59,6 +60,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ManagedContainers)({}),
   Layer.mock(SharedProjects)({}),
   Layer.mock(SharedProjectEnrollment)({}),
+  Layer.mock(SharedProjectContentReplica)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
   Layer.mock(GitVcsDriver)({}),
