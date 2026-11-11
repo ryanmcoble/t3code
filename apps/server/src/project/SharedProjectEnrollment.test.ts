@@ -128,6 +128,13 @@ const fixture = (environmentId: EnvironmentId) => {
   let advertised = descriptor;
   let status = 200;
   let reads = 0;
+  let contentStatus = 200;
+  let contentBody: unknown = { kind: "ended" };
+  const requests: Array<{
+    readonly url: string;
+    readonly authorization: string | undefined;
+    readonly destination: string | undefined;
+  }> = [];
   const cached: SharedProjectManifest[] = [];
   const secretValues = new Map<string, Uint8Array>();
   const projects = Layer.mock(SharedProjects.SharedProjects)({
@@ -143,13 +150,23 @@ const fixture = (environmentId: EnvironmentId) => {
   const http = HttpClient.make((request) =>
     Effect.sync(() => {
       reads += 1;
+      requests.push({
+        url: request.url,
+        authorization: request.headers.authorization,
+        destination: request.headers["t3-project-destination"],
+      });
       return HttpClientResponse.fromWeb(
         request,
-        request.url.includes(".well-known")
-          ? Response.json(advertised)
-          : status === 200
-            ? Response.json(current)
-            : new Response(null, { status, headers: { location: "https://wrong.test" } }),
+        request.url.endsWith("/content")
+          ? Response.json(contentBody, {
+              status: contentStatus,
+              headers: contentStatus === 302 ? { location: "https://wrong.test" } : {},
+            })
+          : request.url.includes(".well-known")
+            ? Response.json(advertised)
+            : status === 200
+              ? Response.json(current)
+              : new Response(null, { status, headers: { location: "https://wrong.test" } }),
       );
     }),
   );
@@ -189,8 +206,82 @@ const fixture = (environmentId: EnvironmentId) => {
       status = value;
     },
     reads: () => reads,
+    requests,
+    setContent: (status: number, body: unknown) => {
+      contentStatus = status;
+      contentBody = body;
+    },
   };
 };
+
+it.effect(
+  "uses the saved owner route and recipient secret for bounded content requests, honors pause and rejects redirects or wrong identity",
+  () => {
+    const test = fixture(member);
+    return Effect.gen(function* () {
+      const service = yield* Enrollment.SharedProjectEnrollment;
+      yield* service.command(connect);
+      const start = { operation: "start", rootId: "docs", expectedManifestRevision: 1 } as const;
+      test.setContent(200, {
+        kind: "snapshot",
+        rootId: "docs",
+        sessionId: "snapshot",
+        manifestRevision: 1,
+        bindingRevision: 1,
+        observation: "fresh",
+        hash: "a".repeat(64),
+        entryCount: 0,
+      });
+      assert.equal((yield* service.contentRequest(manifest.id, start)).kind, "snapshot");
+      assert.deepEqual(test.requests.at(-1), {
+        url: "https://owner.test/api/shared-projects/sample/content",
+        authorization: "Bearer test-only-credential",
+        destination: member,
+      });
+      yield* service.command({ operation: "pause", sharedProjectId: manifest.id, paused: true });
+      const before = test.reads();
+      const paused = yield* service.contentRequest(manifest.id, start).pipe(Effect.result);
+      if (paused._tag !== "Failure") return assert.fail("Expected paused content request");
+      assert.equal(paused.failure.reason, "unmapped");
+      assert.equal(test.reads(), before);
+      yield* service.command({ operation: "pause", sharedProjectId: manifest.id, paused: false });
+      test.setDescriptor({ ...descriptor, environmentId: third });
+      assert.equal(
+        (yield* service.contentRequest(manifest.id, start).pipe(Effect.result))._tag,
+        "Failure",
+      );
+      assert.isUndefined(test.requests.at(-1)?.authorization);
+      test.setDescriptor(descriptor);
+      test.setContent(302, {});
+      const redirected = yield* service.contentRequest(manifest.id, start).pipe(Effect.result);
+      if (redirected._tag !== "Failure") return assert.fail("Expected redirect rejection");
+      assert.equal(redirected.failure.reason, "unreachable");
+      assert.isFalse(test.requests.some((request) => request.url.startsWith("https://wrong.test")));
+      test.setContent(403, { reason: "denied" });
+      const denied = yield* service
+        .contentRequest(manifest.id, { operation: "entries", sessionId: "snapshot", cursor: 0 })
+        .pipe(Effect.result);
+      if (denied._tag !== "Failure") return assert.fail("Expected revoked content grant");
+      assert.equal(denied.failure.reason, "denied");
+      test.setContent(409, { reason: "stale" });
+      const stale = yield* service.contentRequest(manifest.id, start).pipe(Effect.result);
+      if (stale._tag !== "Failure") return assert.fail("Expected stale source");
+      assert.equal(stale.failure.reason, "stale");
+      test.setContent(200, { kind: "chunk", contents: "x".repeat(400_000) });
+      assert.equal(
+        (yield* service.contentRequest(manifest.id, start).pipe(Effect.result))._tag,
+        "Failure",
+      );
+    }).pipe(
+      Effect.provide(
+        test.layer.pipe(
+          Layer.provideMerge(Sqlite.layerMemory.pipe(Layer.provideMerge(NodeServices.layer))),
+        ),
+      ),
+      Effect.scoped,
+    );
+  },
+);
 
 it.effect(
   "restricts grants to selected members, rotates one member without affecting another and revokes immediately",

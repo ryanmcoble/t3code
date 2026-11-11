@@ -3,6 +3,9 @@ import {
   SharedProjectError,
   SharedProjectManifest,
   SharedProjectSubscription,
+  SharedProjectContentError,
+  SharedProjectContentResponse,
+  type SharedProjectContentRequest,
   type SharedProjectGrantInput,
   type SharedProjectGrantResult,
   type SharedProjectEnrollmentCommand,
@@ -50,10 +53,21 @@ export class SharedProjectEnrollment extends Context.Service<
       input: typeof SharedProjectEnrollmentCommand.Type,
     ) => Effect.Effect<void, SharedProjectError>;
     readonly reconcile: Effect.Effect<void, SharedProjectError>;
+    readonly contentRequest: (
+      projectId: string,
+      request: typeof SharedProjectContentRequest.Type,
+    ) => Effect.Effect<
+      typeof SharedProjectContentResponse.Type,
+      SharedProjectError | SharedProjectContentError
+    >;
   }
 >()("t3/project/SharedProjectEnrollment") {}
 
 const codec = Schema.fromJsonString(SharedProjectSubscription);
+const decodeContentResponse = Schema.decodeUnknownEffect(SharedProjectContentResponse);
+const decodeContentFailure = Schema.decodeUnknownEffect(
+  Schema.Struct({ reason: SharedProjectContentError.fields.reason }),
+);
 const storage = () => new SharedProjectError({ reason: "storage" });
 const denied = () => new SharedProjectError({ reason: "denied" });
 const unreachable = () => new SharedProjectError({ reason: "unreachable" });
@@ -222,6 +236,54 @@ const make = Effect.gen(function* () {
     });
   });
   return SharedProjectEnrollment.of({
+    contentRequest: Effect.fn("SharedProjectEnrollment.contentRequest")((projectId, request) =>
+      gate.withPermits(1)(
+        Effect.gen(function* () {
+          const binding = (yield* read(projectId))[0];
+          if (!binding || binding.paused)
+            return yield* new SharedProjectContentError({ reason: "unmapped" });
+          const saved = yield* secrets.get(tokenName(projectId)).pipe(Effect.mapError(storage));
+          if (Option.isNone(saved)) return yield* denied();
+          const token = new TextDecoder().decode(saved.value);
+          if (request.operation === "observe" || request.operation === "start")
+            yield* fetchManifest(binding, token);
+          const url = yield* origin(binding.sourceUrl);
+          const body = yield* HttpClientRequest.post(
+            `${url}/api/shared-projects/${encodeURIComponent(projectId)}/content`,
+          ).pipe(HttpClientRequest.bodyJson(request), Effect.mapError(unreachable));
+          return yield* http
+            .execute(
+              body.pipe(
+                HttpClientRequest.setHeaders({
+                  authorization: `Bearer ${token}`,
+                  "t3-project-destination": environmentId,
+                }),
+              ),
+            )
+            .pipe(
+              Effect.flatMap((response) =>
+                Effect.gen(function* () {
+                  if (response.status === 403) return yield* denied();
+                  if (response.status === 409) {
+                    const failure = yield* response.json.pipe(Effect.flatMap(decodeContentFailure));
+                    return yield* new SharedProjectContentError(failure);
+                  }
+                  if (response.status !== 200) return yield* unreachable();
+                  return yield* response.json.pipe(Effect.flatMap(decodeContentResponse));
+                }),
+              ),
+              Effect.scoped,
+              Effect.timeout("30 seconds"),
+              Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.mebibytes(2)),
+              Effect.mapError((error) =>
+                error._tag === "SharedProjectError" || error._tag === "SharedProjectContentError"
+                  ? error
+                  : unreachable(),
+              ),
+            );
+        }),
+      ),
+    ),
     state: read().pipe(
       Effect.map((subscriptions) => ({
         subscriptions: subscriptions.slice(0, 200),
