@@ -1,6 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import { linkableMachines } from "@t3tools/client-runtime/link-request";
-import { sharedProjectFileStatus } from "@t3tools/client-runtime/state/shared-capabilities";
+import {
+  sharedProjectFileStatus,
+  sharedProjectMappingStatus,
+} from "@t3tools/client-runtime/state/shared-capabilities";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
@@ -156,6 +159,8 @@ export function SharedProjectFilesSettings({
   };
   const canEnable =
     !!project &&
+    sharedProjectMappingStatus(project, binding, environmentId).phase === "mapped" &&
+    !subscription.paused &&
     project.roots.some((root) => root.kind === "files") &&
     !!sourceUrl &&
     owner?.serverConfig?.environment.capabilities.sharedProjectFileContent === 1 &&
@@ -188,8 +193,8 @@ export function SharedProjectFilesSettings({
       </p>
       {!subscription.receiveFiles && !canEnable ? (
         <p className="text-xs text-muted-foreground">
-          Choose a mapped file folder, an updated owner with a reachable HTTPS route, and access to
-          manage its grant and write files here.
+          Map file folders and resume the owner connection first. Use an updated owner with a
+          reachable HTTPS route and access to manage its grant and write files here.
         </p>
       ) : null}
       {error ? (

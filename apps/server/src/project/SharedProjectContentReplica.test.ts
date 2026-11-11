@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
   EnvironmentId,
   ProjectId,
@@ -13,6 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as HttpClient from "effect/http/HttpClient";
+import { FetchHttpClient, HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
 import { vi } from "vite-plus/test";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -27,6 +29,7 @@ import * as Source from "./SharedProjectContentSource.ts";
 import * as Replica from "./SharedProjectContentReplica.ts";
 import * as Store from "./SharedProjectContentStore.ts";
 import * as SharedProjects from "./SharedProjects.ts";
+import * as SharedProjectHttp from "./sharedProjectHttp.ts";
 
 const watches = vi.hoisted(() => new Map<string, (name: string) => void>());
 vi.mock("node:fs", async (importOriginal) => {
@@ -76,6 +79,7 @@ const common = (
   Layer.mergeAll(
     Layer.mock(SharedProjects.SharedProjects)({
       get: () => Effect.succeed(manifest),
+      receive: () => Effect.void,
       getBinding: () =>
         Effect.sync(() => ({
           sharedProjectId: manifest.id,
@@ -375,5 +379,165 @@ it.effect(
         "Failure",
       );
       assert.equal(yield* fs.readFileString(`${b.cwd}/README.md`), "new work after recovery");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "receives through real HTTP, persists enrollment across restart and recovers only after an explicit grant renewal",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const temporary = yield* fs.makeTempDirectoryScoped({ prefix: "t3-content-http-test-" });
+      const parent = yield* fs.realPath(temporary);
+      const ownerRoot = `${parent}/owner-files`;
+      const memberRoot = `${parent}/member-files`;
+      yield* fs.makeDirectory(ownerRoot);
+      yield* fs.makeDirectory(memberRoot);
+      yield* fs.writeFileString(`${ownerRoot}/notes.md`, "original owner bytes");
+      yield* fs.writeFileString(`${ownerRoot}/.env`, "never share this");
+      yield* fs.writeFileString(`${memberRoot}/.env`, "member keeps this");
+      const ownerContext = yield* Layer.build(
+        Source.layer.pipe(
+          Layer.provideMerge(Enrollment.layer),
+          Layer.provideMerge(Transfer.layer),
+          Layer.provideMerge(common(ownerRoot, owner)),
+          Layer.provide(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provideMerge(Sqlite.layerFromPath(`${parent}/owner-home/state.sqlite`)),
+          Layer.provideMerge(
+            ServerConfig.ServerConfig.layerTest(process.cwd(), `${parent}/owner-home`),
+          ),
+        ),
+      );
+      const source = Context.get(ownerContext, Source.SharedProjectContentSource);
+      const ownerEnrollment = Context.get(ownerContext, Enrollment.SharedProjectEnrollment);
+      const routes = Layer.mergeAll(
+        SharedProjectHttp.layer,
+        HttpRouter.add(
+          "GET",
+          "/.well-known/t3/environment",
+          HttpServerResponse.json({
+            environmentId: owner,
+            label: "Owner",
+            platform: { os: "darwin", arch: "arm64" },
+            serverVersion: "test",
+            capabilities: {
+              repositoryIdentity: false,
+              sharedProjectEnrollment: 1,
+              sharedProjectFileContent: 1,
+            },
+          }),
+        ),
+      );
+      const serving = yield* Layer.build(
+        HttpRouter.serve(routes, { disableListenLog: true, disableLogger: true }).pipe(
+          Layer.provideMerge(NodeHttpServer.layerTest),
+          Layer.provide(Layer.succeed(Source.SharedProjectContentSource, source)),
+          Layer.provide(Layer.succeed(Enrollment.SharedProjectEnrollment, ownerEnrollment)),
+        ),
+      );
+      const address = new URL(
+        HttpServer.formatAddress(Context.get(serving, HttpServer.HttpServer).address),
+      );
+      address.hostname = "127.0.0.1";
+      const origin = address.origin;
+      const memberLayer = Replica.layer.pipe(
+        Layer.provideMerge(Store.layer),
+        Layer.provideMerge(Transfer.layer),
+        Layer.provideMerge(Enrollment.layer.pipe(Layer.provide(ServerSecretStore.layer))),
+        Layer.provideMerge(common(memberRoot, first)),
+        Layer.provideMerge(Sqlite.layerFromPath(`${parent}/member-home/state.sqlite`)),
+        Layer.provideMerge(
+          ServerConfig.ServerConfig.layerTest(process.cwd(), `${parent}/member-home`),
+        ),
+        Layer.provide(FetchHttpClient.layer),
+      );
+      const openMember = Effect.gen(function* () {
+        const scope = yield* Scope.make();
+        const context = yield* Layer.build(memberLayer).pipe(
+          Effect.provideService(Scope.Scope, scope),
+        );
+        return {
+          replica: Context.get(context, Replica.SharedProjectContentReplica),
+          enrollment: Context.get(context, Enrollment.SharedProjectEnrollment),
+          close: Scope.close(scope, Exit.void),
+        };
+      });
+      const member = yield* openMember;
+      yield* Effect.addFinalizer(() => member.close);
+      const metadata = yield* ownerEnrollment.grant({
+        sharedProjectId: manifest.id,
+        destinationEnvironmentId: first,
+        access: "metadata",
+        revoke: false,
+      });
+      const connection = {
+        operation: "connect",
+        sharedProjectId: manifest.id,
+        ownerEnvironmentId: owner,
+        sourceUrl: origin,
+        token: metadata.token!,
+      } as const;
+      yield* member.enrollment.command(connection);
+      yield* member.replica.reconcile;
+      assert.isFalse(yield* fs.exists(`${memberRoot}/notes.md`));
+      const files = yield* ownerEnrollment.grant({
+        sharedProjectId: manifest.id,
+        destinationEnvironmentId: first,
+        access: "files",
+        revoke: false,
+      });
+      yield* member.enrollment.command({ ...connection, token: files.token!, receiveFiles: true });
+      yield* member.replica.reconcile;
+      assert.equal(yield* fs.readFileString(`${memberRoot}/notes.md`), "original owner bytes");
+      assert.equal(yield* fs.readFileString(`${memberRoot}/.env`), "member keeps this");
+      yield* member.close;
+      yield* fs.writeFileString(`${ownerRoot}/notes.md`, "new owner bytes after member restart");
+      watches.get(ownerRoot)!("notes.md");
+      const restarted = yield* openMember;
+      yield* Effect.addFinalizer(() => restarted.close);
+      assert.equal((yield* restarted.enrollment.state).subscriptions[0]?.receiveFiles, true);
+      yield* restarted.replica.reconcile;
+      assert.equal(
+        yield* fs.readFileString(`${memberRoot}/notes.md`),
+        "new owner bytes after member restart",
+      );
+      const replacement = yield* ownerEnrollment.grant({
+        sharedProjectId: manifest.id,
+        destinationEnvironmentId: first,
+        access: "files",
+        revoke: false,
+      });
+      yield* fs.writeFileString(`${ownerRoot}/notes.md`, "bytes behind rotated grant");
+      watches.get(ownerRoot)!("notes.md");
+      const blocked = yield* restarted.replica.syncRoot(manifest.id, "docs").pipe(Effect.result);
+      if (blocked._tag !== "Failure") return assert.fail("Expected revoked credential refusal");
+      assert.equal(blocked.failure.reason, "denied");
+      assert.equal(
+        yield* fs.readFileString(`${memberRoot}/notes.md`),
+        "new owner bytes after member restart",
+      );
+      yield* restarted.enrollment.command({
+        ...connection,
+        token: replacement.token!,
+        receiveFiles: true,
+      });
+      yield* restarted.replica.reconcile;
+      assert.equal(
+        yield* fs.readFileString(`${memberRoot}/notes.md`),
+        "bytes behind rotated grant",
+      );
+      yield* restarted.enrollment.command({
+        operation: "receive-files",
+        sharedProjectId: manifest.id,
+        enabled: false,
+      });
+      yield* fs.writeFileString(`${ownerRoot}/notes.md`, "not opted in anymore");
+      watches.get(ownerRoot)!("notes.md");
+      yield* restarted.replica.reconcile;
+      assert.equal(
+        yield* fs.readFileString(`${memberRoot}/notes.md`),
+        "bytes behind rotated grant",
+      );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );

@@ -10,26 +10,44 @@ export function sharedProjectMappingStatus(
   project: SharedProjectManifest,
   binding: SharedProjectBinding | undefined,
   environmentId: EnvironmentId,
-): { readonly title: string; readonly detail: string } {
-  if (project.archived) return { title: "Archived", detail: "Local folders are preserved." };
+): {
+  readonly phase: "archived" | "not-member" | "unmapped" | "review" | "paused" | "mapped";
+  readonly title: string;
+  readonly detail: string;
+} {
+  if (project.archived)
+    return { phase: "archived", title: "Archived", detail: "Local folders are preserved." };
   if (!project.members.includes(environmentId))
     return {
+      phase: "not-member",
       title: "Not a member",
       detail: "The owner must select this machine before mapping folders.",
     };
-  if (!binding || binding.detached || binding.environmentId !== environmentId)
+  if (
+    !binding ||
+    binding.detached ||
+    binding.environmentId !== environmentId ||
+    !project.roots.every((root) => binding.roots.some((mapping) => mapping.rootId === root.id))
+  )
     return {
+      phase: "unmapped",
       title: "Choose local folders",
       detail: "Map each shared root to a registered project on this machine.",
     };
   if (binding.manifestRevision !== project.revision)
     return {
+      phase: "review",
       title: "Mappings need review",
       detail: "The shared project changed. Review every root and save the mappings again.",
     };
   if (binding.paused)
-    return { title: "Paused", detail: "Folder mappings are saved; preparation is paused." };
+    return {
+      phase: "paused",
+      title: "Paused",
+      detail: "Folder mappings are saved; preparation is paused.",
+    };
   return {
+    phase: "mapped",
     title: "Folders mapped",
     detail:
       "Folder mappings are current. Review content preparation separately; execution requirements have not been verified.",
@@ -44,7 +62,7 @@ export function sharedProjectFileStatus(input: {
   readonly environmentId: EnvironmentId;
 }): { readonly title: string; readonly detail: string } {
   const mapping = sharedProjectMappingStatus(input.project, input.binding, input.environmentId);
-  if (mapping.title !== "Folders mapped") return mapping;
+  if (mapping.phase !== "mapped") return mapping;
   if (!input.subscription.receiveFiles)
     return {
       title: "File receiving off",

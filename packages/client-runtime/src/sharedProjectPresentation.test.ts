@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   EnvironmentId,
+  ProjectId,
   type SharedProjectBinding,
   type SharedProjectManifest,
   type SharedProjectSubscription,
@@ -37,7 +38,7 @@ const binding: SharedProjectBinding = {
   manifestRevision: 2,
   revision: 3,
   detached: false,
-  roots: [],
+  roots: [{ rootId: "docs", projectId: ProjectId.make("local-docs"), path: "/home/user/docs" }],
   paused: false,
 };
 
@@ -60,6 +61,10 @@ describe("shared project mapping status", () => {
     );
   });
   it("keeps detach reversible and paused mappings visible", () => {
+    expect(sharedProjectMappingStatus(project, { ...binding, roots: [] }, peer).phase).toBe(
+      "unmapped",
+    );
+    expect(sharedProjectMappingStatus(project, binding, peer).phase).toBe("mapped");
     expect(sharedProjectMappingStatus(project, { ...binding, detached: true }, peer).title).toBe(
       "Choose local folders",
     );
