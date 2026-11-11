@@ -51,6 +51,45 @@ export const SharedProjectState = Schema.Struct({
   complete: Schema.Boolean,
 });
 export type SharedProjectState = typeof SharedProjectState.Type;
+export const SharedProjectSubscription = Schema.Struct({
+  sharedProjectId: Identifier,
+  ownerEnvironmentId: EnvironmentId,
+  sourceUrl: TrimmedNonEmptyString,
+  paused: Schema.Boolean,
+  observedRevision: NonNegativeInt,
+  lastCheckedAt: Schema.NullOr(NonNegativeInt),
+  error: Schema.NullOr(Schema.String),
+});
+export type SharedProjectSubscription = typeof SharedProjectSubscription.Type;
+export const SharedProjectEnrollmentState = Schema.Struct({
+  subscriptions: Schema.Array(SharedProjectSubscription),
+  complete: Schema.Boolean,
+});
+export const SharedProjectGrantInput = Schema.Struct({
+  sharedProjectId: Identifier,
+  destinationEnvironmentId: EnvironmentId,
+  revoke: Schema.Boolean,
+});
+export const SharedProjectGrantResult = Schema.Struct({ token: Schema.NullOr(Schema.String) });
+export const SharedProjectSubscriptionControl = Schema.Union([
+  Schema.Struct({
+    operation: Schema.Literal("pause"),
+    sharedProjectId: Identifier,
+    paused: Schema.Boolean,
+  }),
+  Schema.Struct({ operation: Schema.Literal("disconnect"), sharedProjectId: Identifier }),
+  Schema.Struct({ operation: Schema.Literal("refresh"), sharedProjectId: Identifier }),
+]);
+export const SharedProjectEnrollmentCommand = Schema.Union([
+  Schema.Struct({
+    operation: Schema.Literal("connect"),
+    sharedProjectId: Identifier,
+    ownerEnvironmentId: EnvironmentId,
+    sourceUrl: TrimmedNonEmptyString,
+    token: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+  }),
+  SharedProjectSubscriptionControl,
+]);
 export const SharedProjectPublish = Schema.Struct({
   id: Schema.optionalKey(Identifier),
   expectedRevision: NonNegativeInt,
@@ -91,11 +130,20 @@ export class SharedProjectError extends Schema.TaggedError<SharedProjectError>()
       "invalid-root",
       "root-kind",
       "storage",
+      "denied",
+      "unreachable",
+      "unsupported",
     ]),
   },
 ) {
   override get message(): string {
     switch (this.reason) {
+      case "denied":
+        return "This project subscription is not authorized. Check membership and renew its grant on the owner.";
+      case "unreachable":
+        return "The project owner could not be reached. Cached folders remain local; preparation is waiting.";
+      case "unsupported":
+        return "Update the project owner to a version that supports shared project enrollment.";
       case "not-found":
         return "This shared project is unavailable.";
       case "revision":

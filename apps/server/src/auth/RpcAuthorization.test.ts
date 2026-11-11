@@ -71,6 +71,16 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("keeps shared project credentials behind access management separately from local enrollment", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.sharedProjectGrant)).toBe(AuthAccessWriteScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.sharedProjectEnrollmentCommand)).toBe(
+      AuthSettingsWriteScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.sharedProjectEnrollmentState)).toBe(
+      AuthSettingsWriteScope,
+    );
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
     for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);

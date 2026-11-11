@@ -29,6 +29,7 @@ export class SharedProjects extends Context.Service<
   SharedProjects,
   {
     readonly state: Effect.Effect<SharedProjectState, SharedProjectError>;
+    readonly get: (id: string) => Effect.Effect<SharedProjectManifest, SharedProjectError>;
     readonly publish: (
       input: typeof SharedProjectPublish.Type,
     ) => Effect.Effect<SharedProjectManifest, SharedProjectError>;
@@ -38,6 +39,10 @@ export class SharedProjects extends Context.Service<
     readonly unbind: (
       id: string,
       expectedRevision: number,
+    ) => Effect.Effect<void, SharedProjectError>;
+    readonly receive: (
+      manifest: SharedProjectManifest,
+      ownerId: string,
     ) => Effect.Effect<void, SharedProjectError>;
   }
 >()("t3/project/SharedProjects") {}
@@ -71,12 +76,15 @@ const make = Effect.gen(function* () {
     },
     Effect.mapError(() => new SharedProjectError({ reason: "storage" })),
   );
-  const validate = (input: typeof SharedProjectPublish.Type) => {
+  const validate = (
+    input: Pick<typeof SharedProjectPublish.Type, "roots" | "members">,
+    ownerId = environmentId,
+  ) => {
     const roots = input.roots.map((root) => root.id);
     return (
       roots.length > 0 &&
       new Set(roots).size === roots.length &&
-      input.members.includes(environmentId) &&
+      input.members.includes(ownerId) &&
       new Set(input.members).size === input.members.length &&
       input.roots.every(
         (root) =>
@@ -109,6 +117,52 @@ const make = Effect.gen(function* () {
   }).pipe(Effect.mapError(() => new SharedProjectError({ reason: "storage" })));
   return SharedProjects.of({
     state,
+    get: Effect.fn("SharedProjects.get")(function* (id) {
+      const manifest = yield* latest(id);
+      if (!manifest) return yield* new SharedProjectError({ reason: "not-found" });
+      return manifest;
+    }),
+    receive: Effect.fn("SharedProjects.receive")((manifest, ownerId) =>
+      gate.withPermits(1)(
+        sql
+          .withTransaction(
+            Effect.gen(function* () {
+              if (
+                manifest.ownerEnvironmentId !== ownerId ||
+                ownerId === environmentId ||
+                !manifest.members.includes(environmentId)
+              )
+                return yield* new SharedProjectError({ reason: "denied" });
+              if (!validate(manifest, manifest.ownerEnvironmentId))
+                return yield* new SharedProjectError({ reason: "invalid-manifest" });
+              const previous = yield* latest(manifest.id);
+              if (previous && previous.ownerEnvironmentId !== ownerId)
+                return yield* new SharedProjectError({ reason: "owner" });
+              if (previous && previous.revision > manifest.revision)
+                return yield* new SharedProjectError({ reason: "revision" });
+              const encoded = yield* encodeManifest(manifest).pipe(
+                Effect.mapError(() => new SharedProjectError({ reason: "invalid-manifest" })),
+              );
+              if (previous?.revision === manifest.revision) {
+                const prior = yield* encodeManifest(previous).pipe(
+                  Effect.mapError(() => new SharedProjectError({ reason: "storage" })),
+                );
+                if (prior !== encoded) return yield* new SharedProjectError({ reason: "revision" });
+                return;
+              }
+              const now = yield* Clock.currentTimeMillis;
+              yield* sql`INSERT INTO shared_project_revisions(project_id,revision,owner_environment_id,manifest_json,created_at) VALUES(${manifest.id},${manifest.revision},${ownerId},${encoded},${now})`;
+            }),
+          )
+          .pipe(
+            Effect.mapError((error) =>
+              error._tag === "SharedProjectError"
+                ? error
+                : new SharedProjectError({ reason: "storage" }),
+            ),
+          ),
+      ),
+    ),
     publish: Effect.fn("SharedProjects.publish")(function (input) {
       return gate.withPermits(1)(
         sql

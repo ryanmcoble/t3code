@@ -12,6 +12,10 @@ import {
 import { ComputerUseState, ComputerUseCommand, ComputerUseError } from "./computerUse.ts";
 import {
   SharedProjectState,
+  SharedProjectEnrollmentState,
+  SharedProjectEnrollmentCommand,
+  SharedProjectGrantInput,
+  SharedProjectGrantResult,
   SharedProjectPublish,
   SharedProjectManifest,
   SharedProjectBind,
@@ -587,6 +591,9 @@ export const WS_METHODS = {
   sharedProjectsPublish: "sharedProjects.publish",
   sharedProjectsBind: "sharedProjects.bind",
   sharedProjectsUnbind: "sharedProjects.unbind",
+  sharedProjectEnrollmentState: "sharedProjects.enrollmentState",
+  sharedProjectEnrollmentCommand: "sharedProjects.enrollmentCommand",
+  sharedProjectGrant: "sharedProjects.grant",
   computerUseState: "computerUse.state",
   computerUseCommand: "computerUse.command",
   memoryState: "memory.state",
@@ -927,6 +934,21 @@ const WsComputerUseStateRpc = Rpc.make(WS_METHODS.computerUseState, {
   payload: Schema.Struct({}),
   success: ComputerUseState,
   error: Schema.Union([ComputerUseError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectEnrollmentStateRpc = Rpc.make(WS_METHODS.sharedProjectEnrollmentState, {
+  payload: Schema.Struct({}),
+  success: SharedProjectEnrollmentState,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectEnrollmentCommandRpc = Rpc.make(WS_METHODS.sharedProjectEnrollmentCommand, {
+  payload: SharedProjectEnrollmentCommand,
+  success: Schema.Void,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectGrantRpc = Rpc.make(WS_METHODS.sharedProjectGrant, {
+  payload: SharedProjectGrantInput,
+  success: SharedProjectGrantResult,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
 });
 const WsSharedProjectsStateRpc = Rpc.make(WS_METHODS.sharedProjectsState, {
   payload: Schema.Struct({}),
@@ -2261,6 +2283,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsContainersManagedCreateRpc,
   WsContainersManagedCommandRpc,
   WsSharedProjectsStateRpc,
+  WsSharedProjectEnrollmentStateRpc,
+  WsSharedProjectEnrollmentCommandRpc,
+  WsSharedProjectGrantRpc,
   WsSharedProjectsPublishRpc,
   WsSharedProjectsBindRpc,
   WsSharedProjectsUnbindRpc,

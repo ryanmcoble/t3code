@@ -1,3 +1,5 @@
+import * as SharedProjectEnrollment from "./project/SharedProjectEnrollment.ts";
+import * as SharedProjectHttp from "./project/sharedProjectHttp.ts";
 import * as ProjectStoreV2 from "./orchestration-v2/ProjectStore.ts";
 import * as MemoryTurnObserver from "./memory/MemoryTurnObserver.ts";
 import * as ContainerMonitor from "./containers/ContainerMonitor.ts";
@@ -724,6 +726,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
       ),
     ),
   ),
+  Layer.provideMerge(SharedProjectEnrollment.layer),
   Layer.provideMerge(
     Layer.mergeAll(
       ContainerMonitor.layer.pipe(
@@ -806,6 +809,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
     SetupProfileHttp.layer,
+    SharedProjectHttp.layer,
     MemoryHttp.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,

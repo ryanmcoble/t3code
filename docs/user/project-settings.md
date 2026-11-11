@@ -63,6 +63,18 @@ Detach removes the local mapping while preserving the project folders and files.
 The owner can archive and restore the shared project without deleting those files.
 Selecting members alone does not grant remote access or transfer project content.
 
+On a member machine, use **Follow a project owner**, select the owner and one of
+its projects that includes this machine, then enroll. Both environments need
+shared project enrollment support, and the destination must be able to reach the
+owner's HTTPS route. The connection follows project definitions in the background,
+including after restarting T3; file-content replication is separate.
+
+Pause stops background definition updates. Refresh checks the owner immediately.
+Disconnect removes the local subscription credential and detaches local mappings,
+preserving the folders and cached project history. The owner can revoke a member's
+grant, and removing its membership prevents further reads. An unreachable or
+unauthorized owner remains a visible blocker rather than making cached content ready.
+
 ## Worktree branch names
 
 In **Settings → Worktrees → Worktree branch naming**, choose a static prefix,

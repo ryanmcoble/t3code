@@ -15,6 +15,7 @@ export {
 } from "../sharedProjectPresentation.ts";
 import {
   WS_METHODS,
+  SharedProjectError,
   SharedMemoryError,
   type EnvironmentId,
   type ThreadId,
@@ -104,6 +105,66 @@ export function createSharedCapabilityAtoms<R, E>(
     label: "sharedProjects:state",
     tag: WS_METHODS.sharedProjectsState,
     staleTimeMs: 0,
+    idleTtlMs: 0,
+    refreshIntervalMs: 15_000,
+  });
+  const sharedProjectEnrollmentState = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "sharedProjects:enrollmentState",
+    tag: WS_METHODS.sharedProjectEnrollmentState,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+    refreshIntervalMs: 15_000,
+  });
+  const sharedProjectGrant = createEnvironmentRpcCommand(runtime, {
+    label: "sharedProjects:grant",
+    tag: WS_METHODS.sharedProjectGrant,
+  });
+  const sharedProjectEnrollmentCommand = createEnvironmentRpcCommand(runtime, {
+    label: "sharedProjects:enrollmentCommand",
+    tag: WS_METHODS.sharedProjectEnrollmentCommand,
+    onSuccess: ({ environmentId }, registry) =>
+      Effect.sync(() => {
+        registry.refresh(sharedProjectEnrollmentState({ environmentId, input: {} }));
+        registry.refresh(sharedProjectState({ environmentId, input: {} }));
+      }),
+  });
+  const enrollSharedProject = createRuntimeCommand(runtime, {
+    label: "sharedProjects:enroll",
+    execute: Effect.fn("SharedProjects.enroll")(function* (
+      input: {
+        readonly ownerId: EnvironmentId;
+        readonly destinationId: EnvironmentId;
+        readonly sharedProjectId: string;
+        readonly sourceUrl: string;
+      },
+      registry,
+    ) {
+      const grant = yield* Effect.promise(() =>
+        sharedProjectGrant.run(registry, {
+          environmentId: input.ownerId,
+          input: {
+            sharedProjectId: input.sharedProjectId,
+            destinationEnvironmentId: input.destinationId,
+            revoke: false,
+          },
+        }),
+      );
+      if (grant._tag === "Failure") return yield* Effect.failCause(grant.cause);
+      if (!grant.value.token) return yield* new SharedProjectError({ reason: "denied" });
+      const result = yield* Effect.promise(() =>
+        sharedProjectEnrollmentCommand.run(registry, {
+          environmentId: input.destinationId,
+          input: {
+            operation: "connect",
+            sharedProjectId: input.sharedProjectId,
+            ownerEnvironmentId: input.ownerId,
+            sourceUrl: input.sourceUrl,
+            token: grant.value.token!,
+          },
+        }),
+      );
+      if (result._tag === "Failure") return yield* Effect.failCause(result.cause);
+    }),
   });
   const refreshManaged = (
     environmentId: EnvironmentId,
@@ -127,6 +188,10 @@ export function createSharedCapabilityAtoms<R, E>(
     enroll,
     managedContainers,
     sharedProjectState,
+    sharedProjectEnrollmentState,
+    sharedProjectGrant,
+    sharedProjectEnrollmentCommand,
+    enrollSharedProject,
     sharedProjectPublish: createEnvironmentRpcCommand(runtime, {
       label: "sharedProjects:publish",
       tag: WS_METHODS.sharedProjectsPublish,

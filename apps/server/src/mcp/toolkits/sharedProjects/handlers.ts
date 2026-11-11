@@ -1,6 +1,7 @@
 import { AuthSettingsWriteScope, OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as SharedProjects from "../../../project/SharedProjects.ts";
+import * as SharedProjectEnrollment from "../../../project/SharedProjectEnrollment.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { readCaller, assertFullAccess } from "../../threadAccess.ts";
 import { SharedProjectToolkit } from "./tools.ts";
@@ -18,7 +19,11 @@ const authorized = Effect.gen(function* () {
 });
 export const layer = McpToolAccess.toLayer(SharedProjectToolkit, {
   t3_shared_projects: McpToolAccess.reads(() =>
-    authorized.pipe(Effect.flatMap((service) => service.state)),
+    Effect.gen(function* () {
+      const service = yield* authorized;
+      const enrollment = yield* SharedProjectEnrollment.SharedProjectEnrollment;
+      return { ...(yield* service.state), enrollment: yield* enrollment.state };
+    }),
   ),
   t3_shared_project_configure: McpToolAccess.writesWithCapability((payload) =>
     Effect.gen(function* () {
@@ -33,6 +38,14 @@ export const layer = McpToolAccess.toLayer(SharedProjectToolkit, {
           yield* service.unbind(command.sharedProjectId, command.expectedBindingRevision);
           return null;
       }
+    }),
+  ),
+  t3_shared_project_subscription: McpToolAccess.writesWithCapability((payload) =>
+    Effect.gen(function* () {
+      yield* authorized;
+      const service = yield* SharedProjectEnrollment.SharedProjectEnrollment;
+      yield* service.command(payload.command);
+      return yield* service.state;
     }),
   ),
 });

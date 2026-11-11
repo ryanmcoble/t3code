@@ -22,6 +22,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.containersManagedCreate]: AuthEnvironmentMaintainScope,
   [WS_METHODS.containersManagedCommand]: AuthEnvironmentMaintainScope,
   [WS_METHODS.sharedProjectsPublish]: AuthSettingsWriteScope,
+  [WS_METHODS.sharedProjectEnrollmentCommand]: AuthSettingsWriteScope,
+  [WS_METHODS.sharedProjectGrant]: AuthAccessWriteScope,
   [WS_METHODS.sharedProjectsBind]: AuthSettingsWriteScope,
   [WS_METHODS.sharedProjectsUnbind]: AuthSettingsWriteScope,
   [WS_METHODS.computerUseCommand]: AuthSettingsWriteScope,

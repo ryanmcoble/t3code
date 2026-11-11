@@ -1,3 +1,4 @@
+import * as SharedProjectEnrollment from "./project/SharedProjectEnrollment.ts";
 import * as ContainerMonitor from "./containers/ContainerMonitor.ts";
 import * as ManagedContainers from "./containers/ManagedContainers.ts";
 import * as SharedProjects from "./project/SharedProjects.ts";
@@ -1353,6 +1354,7 @@ export const layerWsRpc = (
       const containers = yield* ContainerMonitor.ContainerMonitor;
       const managedContainers = yield* ManagedContainers.ManagedContainers;
       const sharedProjects = yield* SharedProjects.SharedProjects;
+      const projectEnrollment = yield* SharedProjectEnrollment.SharedProjectEnrollment;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -2524,6 +2526,9 @@ export const layerWsRpc = (
         [WS_METHODS.containersManagedCreate]: (input) => managedContainers.create(input),
         [WS_METHODS.containersManagedCommand]: (input) => managedContainers.command(input),
         [WS_METHODS.sharedProjectsState]: () => sharedProjects.state,
+        [WS_METHODS.sharedProjectEnrollmentState]: () => projectEnrollment.state,
+        [WS_METHODS.sharedProjectEnrollmentCommand]: (input) => projectEnrollment.command(input),
+        [WS_METHODS.sharedProjectGrant]: (input) => projectEnrollment.grant(input),
         [WS_METHODS.sharedProjectsPublish]: (input) => sharedProjects.publish(input),
         [WS_METHODS.sharedProjectsBind]: (input) => sharedProjects.bind(input),
         [WS_METHODS.sharedProjectsUnbind]: (input) =>

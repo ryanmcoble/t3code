@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import { McpSchema, McpServer } from "effect/ai";
 import * as SharedProjects from "../../../project/SharedProjects.ts";
+import * as SharedProjectEnrollment from "../../../project/SharedProjectEnrollment.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -53,17 +54,35 @@ it.effect(
         expect(yield* Ref.get(reads)).toBe(0);
         const read = yield* call(true, "t3_shared_projects", {});
         expect(read.isError).not.toBe(true);
-        expect(read.structuredContent).toEqual({ projects: [], bindings: [], complete: true });
+        expect(read.structuredContent).toEqual({
+          projects: [],
+          bindings: [],
+          complete: true,
+          enrollment: { subscriptions: [], complete: true },
+        });
+        const subscriptionArgs = {
+          command: { operation: "pause", sharedProjectId: "sample", paused: true },
+        };
+        const deniedSubscription = yield* call(
+          false,
+          "t3_shared_project_subscription",
+          subscriptionArgs,
+        );
+        expect(deniedSubscription.isError).toBe(true);
+        expect(yield* Ref.get(writes)).toBe(0);
+        const controlled = yield* call(true, "t3_shared_project_subscription", subscriptionArgs);
+        expect(controlled.isError).not.toBe(true);
+        expect(yield* Ref.get(writes)).toBe(1);
         const args = {
           command: { operation: "unbind", sharedProjectId: "sample", expectedBindingRevision: 1 },
         };
         const deniedWrite = yield* call(false, "t3_shared_project_configure", args);
         expect(deniedWrite.isError).toBe(true);
-        expect(yield* Ref.get(writes)).toBe(0);
+        expect(yield* Ref.get(writes)).toBe(1);
         const write = yield* call(true, "t3_shared_project_configure", args);
         expect(write.isError).toBe(true);
         expect(JSON.stringify(write.content)).toContain("revision");
-        expect(yield* Ref.get(writes)).toBe(1);
+        expect(yield* Ref.get(writes)).toBe(2);
       }).pipe(
         Effect.provide(
           layerSharedProjectToolkit.pipe(
@@ -80,6 +99,12 @@ it.effect(
               }),
             ),
             Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+            Layer.provide(
+              Layer.mock(SharedProjectEnrollment.SharedProjectEnrollment)({
+                state: Effect.succeed({ subscriptions: [], complete: true }),
+                command: () => Ref.update(writes, (value) => value + 1),
+              }),
+            ),
             Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
           ),
         ),

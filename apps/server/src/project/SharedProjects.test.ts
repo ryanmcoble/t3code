@@ -89,6 +89,45 @@ const harness = Effect.gen(function* () {
 });
 
 it.effect(
+  "pins received manifests to their owner, refuses rollback and equivocation, and keeps remote publication read-only",
+  () =>
+    Effect.gen(function* () {
+      const layer = yield* harness;
+      yield* Effect.gen(function* () {
+        const service = yield* SharedProjects.SharedProjects;
+        const remote = { ...draft, id: "remote-project", ownerEnvironmentId: peer, revision: 3 };
+        yield* service.receive(remote, peer);
+        yield* service.receive(remote, peer);
+        assert.equal((yield* service.get(remote.id)).revision, 3);
+        const changed = yield* service
+          .receive({ ...remote, name: "Different same revision" }, peer)
+          .pipe(Effect.result);
+        assert.equal(changed._tag, "Failure");
+        const old = yield* service.receive({ ...remote, revision: 2 }, peer).pipe(Effect.result);
+        assert.equal(old._tag, "Failure");
+        const switched = yield* service
+          .receive({ ...remote, ownerEnvironmentId: third, revision: 4 }, third)
+          .pipe(Effect.result);
+        assert.equal(switched._tag, "Failure");
+        const notMember = yield* service
+          .receive({ ...remote, id: "not-member", members: [peer] }, peer)
+          .pipe(Effect.result);
+        assert.equal(notMember._tag, "Failure");
+        const publish = yield* service
+          .publish({ ...draft, id: remote.id, expectedRevision: 3 })
+          .pipe(Effect.result);
+        assert.equal(publish._tag, "Failure");
+        if (publish._tag === "Failure") assert.equal(publish.failure.reason, "owner");
+        yield* service.receive({ ...remote, revision: 4, archived: true }, peer);
+        assert.isTrue((yield* service.get(remote.id)).archived);
+      }).pipe(Effect.provide(layer));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Sqlite.layerMemory.pipe(Layer.provideMerge(NodeServices.layer))),
+    ),
+);
+
+it.effect(
   "preserves stable project/root identity, explicit three-member selection and revision fencing",
   () =>
     Effect.gen(function* () {

@@ -1,5 +1,7 @@
 import {
   SharedProjectState,
+  SharedProjectEnrollmentState,
+  SharedProjectSubscriptionControl,
   SharedProjectCommand,
   SharedProjectManifest,
   SharedProjectBinding,
@@ -11,11 +13,13 @@ import {
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as SharedProjects from "../../../project/SharedProjects.ts";
+import * as SharedProjectEnrollment from "../../../project/SharedProjectEnrollment.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const dependencies = [
   SharedProjects.SharedProjects,
+  SharedProjectEnrollment.SharedProjectEnrollment,
   ThreadManagement.ThreadManagementService,
   McpInvocationContext.McpInvocationContext,
 ];
@@ -27,9 +31,12 @@ const failure = Schema.Union([
 export const SharedProjectToolkit = Toolkit.make(
   Tool.make("t3_shared_projects", {
     description:
-      "Read shared project manifests and this environment’s local root mappings. Requires settings permission and full access. Stable root IDs are portable; mapped paths belong to this machine. Configuration is separate from content replication and execution readiness.",
+      "Read shared project manifests, local root mappings and owner-subscription health. Requires settings permission and full access. Configuration is separate from content replication and execution readiness.",
     parameters: Schema.Struct({ environmentId: OrchestratorMcpEnvironmentTarget }),
-    success: SharedProjectState,
+    success: Schema.Struct({
+      ...SharedProjectState.fields,
+      enrollment: SharedProjectEnrollmentState,
+    }),
     failure,
     failureMode: "return",
     dependencies,
@@ -44,6 +51,20 @@ export const SharedProjectToolkit = Toolkit.make(
       command: SharedProjectCommand,
     }),
     success: Schema.Union([SharedProjectManifest, SharedProjectBinding, Schema.Null]),
+    failure,
+    failureMode: "return",
+    dependencies,
+  })
+    .annotate(Tool.Readonly, false)
+    .annotate(Tool.Destructive, false),
+  Tool.make("t3_shared_project_subscription", {
+    description:
+      "Pause, resume, refresh or disconnect an existing project-owner subscription. Disconnect preserves cached history and local files, and detaches mappings. Enroll new machines through Settings; credentials stay in the server secret store.",
+    parameters: Schema.Struct({
+      environmentId: OrchestratorMcpEnvironmentTarget,
+      command: SharedProjectSubscriptionControl,
+    }),
+    success: SharedProjectEnrollmentState,
     failure,
     failureMode: "return",
     dependencies,

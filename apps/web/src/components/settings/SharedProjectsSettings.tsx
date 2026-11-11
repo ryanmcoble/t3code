@@ -23,6 +23,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SharedProjectEnrollmentSettings } from "./SharedProjectEnrollmentSettings";
 
 export function SharedProjectsSettings({
   environmentId,
@@ -52,6 +53,12 @@ export function SharedProjectsSettings({
         title="One project, multiple folders"
         description="Choose member machines and map shared roots to local projects. Folder mappings preserve existing files; they do not establish synchronization or execution readiness."
       />
+      {config?.environment.capabilities.sharedProjectEnrollment === 1 ? (
+        <SharedProjectEnrollmentSettings
+          environmentId={environmentId}
+          projects={state.data?.projects ?? []}
+        />
+      ) : null}
       {state.error ? (
         <SettingsRow
           title="Could not load shared projects"

@@ -24,6 +24,7 @@ import { serverEnvironment } from "../../state/server";
 import { sharedCapabilities } from "../../state/sharedCapabilities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
+import { SharedProjectEnrollmentSection } from "./SharedProjectEnrollmentSection";
 
 export function SharedProjectsSection({
   environmentId,
@@ -49,6 +50,12 @@ export function SharedProjectsSection({
         </Text>
       </View>
       <ListActionRow label="Refresh projects" onPress={state.refresh} />
+      {config?.environment.capabilities.sharedProjectEnrollment === 1 ? (
+        <SharedProjectEnrollmentSection
+          environmentId={environmentId}
+          projects={state.data?.projects ?? []}
+        />
+      ) : null}
       {state.error ? (
         <View className="p-4">
           <Text>{state.error}</Text>
