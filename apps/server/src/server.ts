@@ -2,6 +2,7 @@ import * as ProjectStoreV2 from "./orchestration-v2/ProjectStore.ts";
 import * as MemoryTurnObserver from "./memory/MemoryTurnObserver.ts";
 import * as ContainerMonitor from "./containers/ContainerMonitor.ts";
 import * as ManagedContainers from "./containers/ManagedContainers.ts";
+import * as SharedProjects from "./project/SharedProjects.ts";
 import * as ManagedContainerDriver from "./containers/ManagedContainerDriver.ts";
 import * as DockerAdapter from "./containers/DockerAdapter.ts";
 import * as ComputerUse from "./computer/ComputerUse.ts";
@@ -736,6 +737,13 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
         Layer.provide(layerKnownWorkspaces),
         Layer.provide(ProjectStore.layer),
         Layer.provide(ProjectionStoreV2.layer),
+      ),
+      SharedProjects.layer.pipe(
+        Layer.provide(layerKnownWorkspaces),
+        Layer.provide(ProjectStore.layer),
+        Layer.provide(layerVcsDriverRegistry),
+        Layer.provide(ServerEnvironment.layerIdentity),
+        Layer.provide(layerRepositoryIdentityResolver),
       ),
     ),
   ),

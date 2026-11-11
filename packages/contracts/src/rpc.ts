@@ -11,6 +11,14 @@ import {
 } from "./containers.ts";
 import { ComputerUseState, ComputerUseCommand, ComputerUseError } from "./computerUse.ts";
 import {
+  SharedProjectState,
+  SharedProjectPublish,
+  SharedProjectManifest,
+  SharedProjectBind,
+  SharedProjectBinding,
+  SharedProjectError,
+} from "./sharedProject.ts";
+import {
   MemoryState,
   MemoryQuery,
   MemoryQueryResult,
@@ -88,7 +96,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString, ThreadId } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString, ThreadId } from "./baseSchemas.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -575,6 +583,10 @@ export const WS_METHODS = {
   containersManagedList: "containers.managedList",
   containersManagedCreate: "containers.managedCreate",
   containersManagedCommand: "containers.managedCommand",
+  sharedProjectsState: "sharedProjects.state",
+  sharedProjectsPublish: "sharedProjects.publish",
+  sharedProjectsBind: "sharedProjects.bind",
+  sharedProjectsUnbind: "sharedProjects.unbind",
   computerUseState: "computerUse.state",
   computerUseCommand: "computerUse.command",
   memoryState: "memory.state",
@@ -915,6 +927,26 @@ const WsComputerUseStateRpc = Rpc.make(WS_METHODS.computerUseState, {
   payload: Schema.Struct({}),
   success: ComputerUseState,
   error: Schema.Union([ComputerUseError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectsStateRpc = Rpc.make(WS_METHODS.sharedProjectsState, {
+  payload: Schema.Struct({}),
+  success: SharedProjectState,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectsPublishRpc = Rpc.make(WS_METHODS.sharedProjectsPublish, {
+  payload: SharedProjectPublish,
+  success: SharedProjectManifest,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectsBindRpc = Rpc.make(WS_METHODS.sharedProjectsBind, {
+  payload: SharedProjectBind,
+  success: SharedProjectBinding,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectsUnbindRpc = Rpc.make(WS_METHODS.sharedProjectsUnbind, {
+  payload: Schema.Struct({ sharedProjectId: Schema.String, expectedBindingRevision: PositiveInt }),
+  success: Schema.Void,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
 });
 const WsComputerUseCommandRpc = Rpc.make(WS_METHODS.computerUseCommand, {
   payload: ComputerUseCommand,
@@ -2228,6 +2260,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsContainersManagedListRpc,
   WsContainersManagedCreateRpc,
   WsContainersManagedCommandRpc,
+  WsSharedProjectsStateRpc,
+  WsSharedProjectsPublishRpc,
+  WsSharedProjectsBindRpc,
+  WsSharedProjectsUnbindRpc,
   WsComputerUseStateRpc,
   WsComputerUseCommandRpc,
   WsMemoryStateRpc,

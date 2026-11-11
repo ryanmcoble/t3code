@@ -95,6 +95,11 @@ export function createSharedCapabilityAtoms<R, E>(
     staleTimeMs: 0,
     idleTtlMs: 0,
   });
+  const sharedProjectState = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "sharedProjects:state",
+    tag: WS_METHODS.sharedProjectsState,
+    staleTimeMs: 0,
+  });
   const refreshManaged = (
     environmentId: EnvironmentId,
     threadId: ThreadId,
@@ -116,6 +121,25 @@ export function createSharedCapabilityAtoms<R, E>(
     memoryGrant,
     enroll,
     managedContainers,
+    sharedProjectState,
+    sharedProjectPublish: createEnvironmentRpcCommand(runtime, {
+      label: "sharedProjects:publish",
+      tag: WS_METHODS.sharedProjectsPublish,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.refresh(sharedProjectState({ environmentId, input: {} }))),
+    }),
+    sharedProjectBind: createEnvironmentRpcCommand(runtime, {
+      label: "sharedProjects:bind",
+      tag: WS_METHODS.sharedProjectsBind,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.refresh(sharedProjectState({ environmentId, input: {} }))),
+    }),
+    sharedProjectUnbind: createEnvironmentRpcCommand(runtime, {
+      label: "sharedProjects:unbind",
+      tag: WS_METHODS.sharedProjectsUnbind,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.refresh(sharedProjectState({ environmentId, input: {} }))),
+    }),
     managedContainerCreate: createEnvironmentRpcCommand(runtime, {
       label: "containers:create",
       tag: WS_METHODS.containersManagedCreate,

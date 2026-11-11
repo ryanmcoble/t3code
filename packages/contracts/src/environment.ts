@@ -75,6 +75,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   computerUse: Schema.optionalKey(Schema.Literal(1)),
   containers: Schema.optionalKey(Schema.Literal(1)),
   managedContainers: Schema.optionalKey(Schema.Literal(1)),
+  sharedProjects: Schema.optionalKey(Schema.Literal(1)),
   computerUseAppRules: Schema.optionalKey(Schema.Literal(1)),
   setupProfiles: Schema.optionalKey(Schema.Literal(1)),
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
