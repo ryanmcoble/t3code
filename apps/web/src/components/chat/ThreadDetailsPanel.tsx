@@ -241,6 +241,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
               {density === "full" && visible.containers ? (
                 <ThreadContainersPanel
+                  threadId={props.threadId}
                   environmentId={props.environmentId}
                   projectId={props.projectId}
                   folder={props.gitCwd}

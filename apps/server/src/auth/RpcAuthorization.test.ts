@@ -96,6 +96,15 @@ describe("RPC authorization scopes", () => {
     ])
       expect(requiredScopeForRpcMethod(method)).toBe(AuthDiagnosticsReadScope);
     expect(requiredScopeForRpcMethod(WS_METHODS.containersAssociate)).toBe(AuthSettingsWriteScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.containersManagedList)).toBe(
+      AuthDiagnosticsReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.containersManagedCreate)).toBe(
+      AuthEnvironmentMaintainScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.containersManagedCommand)).toBe(
+      AuthEnvironmentMaintainScope,
+    );
   });
 
   it("rejects unknown RPC method names", () => {

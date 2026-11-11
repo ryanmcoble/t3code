@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString, NonNegativeInt, PositiveInt } from "./baseSchemas.ts";
+import { TrimmedNonEmptyString, NonNegativeInt, PositiveInt, ThreadId } from "./baseSchemas.ts";
 
 export const ContainerId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
 export const ContainerAssociation = Schema.Struct({
@@ -110,6 +110,10 @@ export class ContainerError extends Schema.TaggedError<ContainerError>()("Contai
     "engine-changed",
     "storage",
     "unproven-stack",
+    "ownership",
+    "retained",
+    "revision",
+    "invalid-image",
   ]),
 }) {
   override get message(): string {
@@ -128,6 +132,53 @@ export class ContainerError extends Schema.TaggedError<ContainerError>()("Contai
         return "Container associations could not be saved or read.";
       case "unproven-stack":
         return "This container does not identify a Compose project and configuration-file set. Link the individual container instead.";
+      case "ownership":
+        return "The container's durable ownership record and Docker labels do not match. No lifecycle action was performed.";
+      case "retained":
+        return "This resource is retained. Clear retention before releasing it.";
+      case "revision":
+        return "This resource changed. Refresh its status before continuing.";
+      case "invalid-image":
+        return "Choose a locally installed image by its full sha256 ID, without declared volumes. T3 does not pull images or adopt anonymous volumes.";
     }
   }
 }
+
+export const ManagedContainer = Schema.Struct({
+  resourceId: TrimmedNonEmptyString,
+  workspaceId: TrimmedNonEmptyString,
+  threadId: ThreadId,
+  engineId: TrimmedNonEmptyString,
+  containerId: Schema.NullOr(ContainerId),
+  name: TrimmedNonEmptyString,
+  image: Schema.String,
+  phase: Schema.Literals(["pending", "ready", "releasing", "failed", "released"]),
+  generation: PositiveInt,
+  retained: Schema.Boolean,
+  references: Schema.Array(ThreadId),
+  failure: Schema.NullOr(Schema.String),
+});
+export type ManagedContainer = typeof ManagedContainer.Type;
+export const ManagedContainerInventory = Schema.Struct({
+  items: Schema.Array(ManagedContainer),
+  complete: Schema.Boolean,
+});
+export const ManagedContainerCreate = Schema.Struct({
+  threadId: ThreadId,
+  requestId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  image: Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/)),
+  command: Schema.Array(Schema.String.check(Schema.isMaxLength(4096))).check(
+    Schema.isMaxLength(64),
+  ),
+  mountWorkspace: Schema.Boolean,
+  ports: Schema.Array(PositiveInt.check(Schema.isLessThanOrEqualTo(65535))).check(
+    Schema.isMaxLength(8),
+  ),
+});
+export const ManagedContainerCommand = Schema.Struct({
+  resourceId: TrimmedNonEmptyString,
+  threadId: ThreadId,
+  generation: PositiveInt,
+  operation: Schema.Literals(["start", "stop", "release", "retry", "retain", "unretain", "share"]),
+  referenceThreadId: Schema.optionalKey(ThreadId),
+});

@@ -46,6 +46,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.containersSubscribe]: AuthDiagnosticsReadScope,
   [WS_METHODS.containersSnapshot]: AuthDiagnosticsReadScope,
   [WS_METHODS.containersLogs]: AuthDiagnosticsReadScope,
+  [WS_METHODS.containersManagedList]: AuthDiagnosticsReadScope,
   [WS_METHODS.computerUseState]: AuthSettingsWriteScope,
   [WS_METHODS.setupProfilesSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.setupProfilesState]: AuthOrchestrationReadScope,

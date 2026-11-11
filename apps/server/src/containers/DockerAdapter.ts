@@ -12,23 +12,17 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as NodeUtil from "node:util";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as ProcessRunner from "../processRunner.ts";
+import {
+  DockerAdapterError,
+  dockerErrorStatus as errorStatus,
+  makeDockerConnection,
+} from "./DockerConnection.ts";
+export { DockerAdapterError } from "./DockerConnection.ts";
 import { parseDockerMemory } from "./DockerModel.ts";
 
 type Inventory = Pick<ContainerSnapshot, "engineName" | "complete" | "containers" | "message"> & {
   readonly engineId: string;
 };
-export class DockerAdapterError extends Schema.TaggedError<DockerAdapterError>()(
-  "DockerAdapterError",
-  {
-    status: Schema.Literals([
-      "cli-missing",
-      "engine-unavailable",
-      "permission-denied",
-      "unsupported",
-    ]),
-  },
-) {}
 export class DockerAdapter extends Context.Service<
   DockerAdapter,
   {
@@ -66,15 +60,8 @@ const Inspect = Schema.Struct({
 // Keep this projection explicit: raw inspect includes environment variables and other credentials.
 const INSPECT_FORMAT =
   '{"id":{{json .Id}},"name":{{json .Name}},"image":{{json .Config.Image}},"state":{{json .State.Status}},"health":{{with (index .State "Health")}}{{json .Status}}{{else}}null{{end}},"restartCount":{{json .RestartCount}},"startedAt":{{json .State.StartedAt}},"finishedAt":{{json .State.FinishedAt}},"composeProject":{{json (index .Config.Labels "com.docker.compose.project")}},"composeService":{{json (index .Config.Labels "com.docker.compose.service")}},"workingDirectory":{{json (index .Config.Labels "com.docker.compose.project.working_dir")}},"configFiles":{{json (index .Config.Labels "com.docker.compose.project.config_files")}},"mounts":{{json .Mounts}},"ports":{{json .NetworkSettings.Ports}}}';
-const INFO_FORMAT = '{"id":{{json .ID}},"name":{{json .Name}},"osType":{{json .OSType}}}';
 const STATS_FORMAT =
   '{"id":{{json .Container}},"cpu":{{json .CPUPerc}},"memory":{{json .MemUsage}}}';
-const decodeHost = Schema.decodeEffect(Schema.fromJsonString(Schema.String));
-const decodeInfo = Schema.decodeEffect(
-  Schema.fromJsonString(
-    Schema.Struct({ id: Schema.String, name: Schema.String, osType: Schema.String }),
-  ),
-);
 const decodeInspect = Schema.decodeUnknownOption(Schema.fromJsonString(Inspect));
 const decodeStat = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -85,12 +72,6 @@ const fullId = /^[a-f0-9]{64}$/;
 const nullable = (value: string | null): string | null => value?.trim() || null;
 const timestamp = (value: string | null): string | null =>
   value?.startsWith("0001-") ? null : nullable(value);
-const errorStatus = (
-  output: ProcessRunner.ProcessRunOutput,
-): "permission-denied" | "engine-unavailable" =>
-  /permission denied|access is denied/i.test(output.stderr)
-    ? "permission-denied"
-    : "engine-unavailable";
 
 function unknownContainer(id: string): ContainerRecord {
   return {
@@ -169,73 +150,7 @@ export const makeDockerAdapter = Effect.fn("DockerAdapter.make")(function* (opti
   readonly environment: NodeJS.ProcessEnv;
   readonly command?: string;
 }) {
-  const runner = yield* ProcessRunner.ProcessRunner;
-  const command = options.command ?? "docker";
-  const invoke = (args: ReadonlyArray<string>, host?: string, maxOutputBytes = 4 * 1024 * 1024) =>
-    runner
-      .run({
-        command,
-        args: host ? ["--host", host, ...args] : args,
-        env: host
-          ? {
-              ...options.environment,
-              DOCKER_CONTEXT: "",
-              DOCKER_HOST: host,
-              DOCKER_TLS_VERIFY: "",
-              DOCKER_CERT_PATH: "",
-            }
-          : options.environment,
-        timeout: "10 seconds",
-        maxOutputBytes,
-        outputMode: "truncate",
-      })
-      .pipe(
-        Effect.mapError(
-          (error) =>
-            new DockerAdapterError({
-              status: error._tag === "ProcessSpawnError" ? "cli-missing" : "engine-unavailable",
-            }),
-        ),
-      );
-
-  const engine = Effect.gen(function* () {
-    if (options.platform !== "darwin" && options.platform !== "linux")
-      return yield* new DockerAdapterError({ status: "unsupported" });
-    let host = options.environment.DOCKER_CONTEXT?.trim()
-      ? undefined
-      : options.environment.DOCKER_HOST?.trim();
-    if (!host) {
-      const context = yield* invoke(
-        [
-          "context",
-          "inspect",
-          ...(options.environment.DOCKER_CONTEXT?.trim()
-            ? [options.environment.DOCKER_CONTEXT.trim()]
-            : []),
-          "--format",
-          "{{json .Endpoints.docker.Host}}",
-        ],
-        undefined,
-        4096,
-      );
-      if (context.code !== 0 || context.stdoutTruncated)
-        return yield* new DockerAdapterError({ status: errorStatus(context) });
-      host = yield* decodeHost(context.stdout.trim()).pipe(
-        Effect.mapError(() => new DockerAdapterError({ status: "unsupported" })),
-      );
-    }
-    if (!host.startsWith("unix:///") || host.includes("\n"))
-      return yield* new DockerAdapterError({ status: "unsupported" });
-    const result = yield* invoke(["info", "--format", INFO_FORMAT], host, 16384);
-    if (result.code !== 0 || result.stdoutTruncated)
-      return yield* new DockerAdapterError({ status: errorStatus(result) });
-    const info = yield* decodeInfo(result.stdout.trim()).pipe(
-      Effect.mapError(() => new DockerAdapterError({ status: "engine-unavailable" })),
-    );
-    if (!info.id || info.osType !== "linux")
-      return yield* new DockerAdapterError({ status: "unsupported" });
-    return { host, id: info.id, name: info.name };
-  });
+  const { select: engine, invoke } = yield* makeDockerConnection(options);
 
   const inventory = Effect.gen(function* () {
     const selected = yield* engine;

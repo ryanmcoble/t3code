@@ -1,12 +1,14 @@
 # Share memory and desktop tools
 
+Use **Settings → Environments → Environment setup** to choose a machine, then open **Memory** or **Computer use**. The mobile app exposes the same controls under the environment's settings.
+
 ## Containers
 
 Open **Settings → Environments → Containers** to inspect Docker on a selected machine. A thread's **Containers** section shows containers linked to its project or worktree. Search and filter the inventory, expand a container for its ports and measurements, or request recent logs. Collection stops when the view is closed or backgrounded; cached and partial results are labeled.
 
 T3 uses Compose paths and bind mounts to suggest folder links. You can include or exclude a container explicitly, or link a Compose stack when its configuration files establish its identity. Saved stack links survive container replacement. Remove obsolete links under saved folder rules. These links describe relationships; they do not grant cleanup ownership or change Docker resources. Only local Docker engines are supported. Agents with diagnostics access can inspect the same inventory and bounded logs through `t3_containers`.
 
-Use **Settings → Environments → Environment setup** to choose a machine, then open **Memory** or **Computer use**. The mobile app exposes the same controls under the environment's settings.
+Ask an agent to provision a T3-managed disposable container when you want lifecycle controls. Creation requires an installed image without declared volumes; it does not pull images. Published ports bind only to loopback. **Managed resources** shows ownership receipts and start, stop, retain, recovery and release actions on desktop and mobile. Retention blocks release, and shared references protect other threads. Release removes the owned container while preserving mounted workspace files and Docker volumes. Existing unowned containers cannot be adopted or released through these controls.
 
 ## Shared memory
 

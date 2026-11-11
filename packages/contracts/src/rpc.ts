@@ -4,6 +4,10 @@ import {
   ContainerLogsResult,
   ContainerAssociationCommand,
   ContainerError,
+  ManagedContainer,
+  ManagedContainerInventory,
+  ManagedContainerCreate,
+  ManagedContainerCommand,
 } from "./containers.ts";
 import { ComputerUseState, ComputerUseCommand, ComputerUseError } from "./computerUse.ts";
 import {
@@ -568,6 +572,9 @@ export const WS_METHODS = {
   containersSnapshot: "containers.snapshot",
   containersLogs: "containers.logs",
   containersAssociate: "containers.associate",
+  containersManagedList: "containers.managedList",
+  containersManagedCreate: "containers.managedCreate",
+  containersManagedCommand: "containers.managedCommand",
   computerUseState: "computerUse.state",
   computerUseCommand: "computerUse.command",
   memoryState: "memory.state",
@@ -887,6 +894,21 @@ const WsContainersLogsRpc = Rpc.make(WS_METHODS.containersLogs, {
 const WsContainersAssociateRpc = Rpc.make(WS_METHODS.containersAssociate, {
   payload: ContainerAssociationCommand,
   success: Schema.Void,
+  error: Schema.Union([ContainerError, EnvironmentAuthorizationError]),
+});
+const WsContainersManagedListRpc = Rpc.make(WS_METHODS.containersManagedList, {
+  payload: Schema.Struct({ threadId: Schema.optionalKey(ThreadId) }),
+  success: ManagedContainerInventory,
+  error: Schema.Union([ContainerError, EnvironmentAuthorizationError]),
+});
+const WsContainersManagedCreateRpc = Rpc.make(WS_METHODS.containersManagedCreate, {
+  payload: ManagedContainerCreate,
+  success: ManagedContainer,
+  error: Schema.Union([ContainerError, EnvironmentAuthorizationError]),
+});
+const WsContainersManagedCommandRpc = Rpc.make(WS_METHODS.containersManagedCommand, {
+  payload: ManagedContainerCommand,
+  success: ManagedContainer,
   error: Schema.Union([ContainerError, EnvironmentAuthorizationError]),
 });
 const WsComputerUseStateRpc = Rpc.make(WS_METHODS.computerUseState, {
@@ -2203,6 +2225,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsContainersSnapshotRpc,
   WsContainersLogsRpc,
   WsContainersAssociateRpc,
+  WsContainersManagedListRpc,
+  WsContainersManagedCreateRpc,
+  WsContainersManagedCommandRpc,
   WsComputerUseStateRpc,
   WsComputerUseCommandRpc,
   WsMemoryStateRpc,

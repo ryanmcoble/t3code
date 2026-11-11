@@ -419,6 +419,7 @@ export const mcpClientScopes = (access: AuthMcpClientAccess): ReadonlyArray<Auth
           AuthSettingsWriteScope,
           AuthSourceControlWriteScope,
           AuthDiagnosticsReadScope,
+          AuthEnvironmentMaintainScope,
         ]
       : [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
 

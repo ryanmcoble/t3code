@@ -6,6 +6,7 @@ import {
   type ContainerSnapshot,
   type ContainerFolderRule,
   type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   containerCountLabel,
@@ -28,15 +29,18 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { ManagedContainerList } from "./ManagedContainerList";
 
 function ContainerPanel({
   environmentId,
   folders,
   snapshot,
+  threadId,
 }: {
   readonly environmentId: EnvironmentId;
   readonly folders?: ReadonlyArray<string>;
   readonly snapshot: EnvironmentQueryView<ContainerSnapshot>;
+  readonly threadId?: ThreadId;
 }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ContainerFilter>("all");
@@ -165,6 +169,11 @@ function ContainerPanel({
                 : "Inventory is unavailable."}
         </p>
       ) : null}
+      <ManagedContainerList
+        environmentId={environmentId}
+        {...(threadId ? { threadId } : {})}
+        {...(data ? { snapshot: data } : {})}
+      />
     </div>
   );
 }
@@ -274,10 +283,12 @@ export function ContainerDisclosure({
   environmentId,
   label,
   folders,
+  threadId,
 }: {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly folders?: ReadonlyArray<string>;
+  readonly threadId?: ThreadId;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [cachedSummary, setCachedSummary] = useState("Expand to check Docker");
@@ -325,6 +336,7 @@ export function ContainerDisclosure({
           <ContainerPanel
             environmentId={environmentId}
             snapshot={snapshot}
+            {...(threadId ? { threadId } : {})}
             {...(folders ? { folders } : {})}
           />
         )

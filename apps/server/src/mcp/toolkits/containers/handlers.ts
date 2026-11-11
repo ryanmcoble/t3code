@@ -1,10 +1,12 @@
 import {
   AuthDiagnosticsReadScope,
+  AuthEnvironmentMaintainScope,
   ContainerError,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as ContainerMonitor from "../../../containers/ContainerMonitor.ts";
+import * as ManagedContainers from "../../../containers/ManagedContainers.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { assertFullAccess, readCaller } from "../../threadAccess.ts";
 import { ContainerToolkit } from "./tools.ts";
@@ -27,6 +29,11 @@ export const layer = McpToolAccess.toLayer(ContainerToolkit, {
           "Native container diagnostics require a full-access thread.",
         );
       const monitor = yield* ContainerMonitor.ContainerMonitor;
+      if (input.operation === "managed")
+        return {
+          kind: "managed" as const,
+          ...(yield* (yield* ManagedContainers.ManagedContainers).list(input.threadId)),
+        };
       if (input.operation === "logs")
         return { kind: "logs" as const, ...(yield* monitor.logs(input)) };
       const snapshot = yield* monitor.refresh;
@@ -76,6 +83,35 @@ export const layer = McpToolAccess.toLayer(ContainerToolkit, {
           }),
         ),
       };
+    }),
+  ),
+  t3_container_manage: McpToolAccess.writesWithCapability((payload) =>
+    Effect.gen(function* () {
+      const caller = yield* readCaller();
+      yield* assertFullAccess(
+        caller,
+        "Managed Docker resources require a full-access/default thread.",
+      );
+      if (
+        caller.scope.client &&
+        !caller.scope.client.scopes?.includes(AuthEnvironmentMaintainScope)
+      )
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message:
+            "This MCP connection needs environment:maintain permission to manage Docker resources.",
+        });
+      const request = payload.request;
+      const threadId = request.operation === "create" ? request.threadId : request.command.threadId;
+      if (caller.scope.thread && caller.scope.thread.threadId !== threadId)
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "Native agents may manage containers only through their own thread reference.",
+        });
+      const resources = yield* ManagedContainers.ManagedContainers;
+      return request.operation === "create"
+        ? yield* resources.create(request)
+        : yield* resources.command(request.command);
     }),
   ),
 });

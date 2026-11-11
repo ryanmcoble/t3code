@@ -223,6 +223,7 @@ export const make = Effect.gen(function* () {
       computerUse: 1,
       computerUseAppRules: 1,
       containers: 1,
+      managedContainers: 1,
       repositoryIdentity: true,
       connectionProbe: true,
       attachmentUploads: true,

@@ -1,6 +1,8 @@
 import * as ProjectStoreV2 from "./orchestration-v2/ProjectStore.ts";
 import * as MemoryTurnObserver from "./memory/MemoryTurnObserver.ts";
 import * as ContainerMonitor from "./containers/ContainerMonitor.ts";
+import * as ManagedContainers from "./containers/ManagedContainers.ts";
+import * as ManagedContainerDriver from "./containers/ManagedContainerDriver.ts";
 import * as DockerAdapter from "./containers/DockerAdapter.ts";
 import * as ComputerUse from "./computer/ComputerUse.ts";
 import * as ComputerDriver from "./computer/ComputerDriver.ts";
@@ -722,11 +724,19 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
     ),
   ),
   Layer.provideMerge(
-    ContainerMonitor.layer.pipe(
-      Layer.provide(DockerAdapter.layer.pipe(Layer.provide(ProcessRunner.layer))),
-      Layer.provide(layerKnownWorkspaces),
-      Layer.provide(ProjectStore.layer),
-      Layer.provide(layerServerSettings),
+    Layer.mergeAll(
+      ContainerMonitor.layer.pipe(
+        Layer.provide(DockerAdapter.layer.pipe(Layer.provide(ProcessRunner.layer))),
+        Layer.provide(layerKnownWorkspaces),
+        Layer.provide(ProjectStore.layer),
+        Layer.provide(layerServerSettings),
+      ),
+      ManagedContainers.layer.pipe(
+        Layer.provide(ManagedContainerDriver.layer.pipe(Layer.provide(ProcessRunner.layer))),
+        Layer.provide(layerKnownWorkspaces),
+        Layer.provide(ProjectStore.layer),
+        Layer.provide(ProjectionStoreV2.layer),
+      ),
     ),
   ),
   Layer.provideMerge(layerWorkspace),

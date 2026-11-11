@@ -12,10 +12,11 @@ import {
   WS_METHODS,
   SharedMemoryError,
   type EnvironmentId,
+  type ThreadId,
   type MemoryRemoteBinding,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Atom } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   createEnvironmentRpcSubscriptionAtomFamily,
@@ -88,6 +89,21 @@ export function createSharedCapabilityAtoms<R, E>(
       if (enrolled._tag === "Failure") return yield* Effect.failCause(enrolled.cause);
     }),
   });
+  const managedContainers = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "containers:managed",
+    tag: WS_METHODS.containersManagedList,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+  });
+  const refreshManaged = (
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    registry: AtomRegistry.AtomRegistry,
+  ) =>
+    Effect.sync(() => {
+      registry.refresh(managedContainers({ environmentId, input: {} }));
+      registry.refresh(managedContainers({ environmentId, input: { threadId } }));
+    });
   return {
     memoryState,
     memoryStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -99,6 +115,19 @@ export function createSharedCapabilityAtoms<R, E>(
     memoryCommand,
     memoryGrant,
     enroll,
+    managedContainers,
+    managedContainerCreate: createEnvironmentRpcCommand(runtime, {
+      label: "containers:create",
+      tag: WS_METHODS.containersManagedCreate,
+      onSuccess: ({ environmentId, input }, registry) =>
+        refreshManaged(environmentId, input.threadId, registry),
+    }),
+    managedContainerCommand: createEnvironmentRpcCommand(runtime, {
+      label: "containers:command",
+      tag: WS_METHODS.containersManagedCommand,
+      onSuccess: ({ environmentId, input }, registry) =>
+        refreshManaged(environmentId, input.threadId, registry),
+    }),
     containers: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "containers:subscribe",
       tag: WS_METHODS.containersSubscribe,

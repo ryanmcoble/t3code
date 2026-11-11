@@ -1561,6 +1561,7 @@ export function ExistingThreadSettingsRouteScreen({
             threadActive={selectedThread.runtime?.activeRunId != null}
           />
           <ContainerSection
+            threadId={selectedThread.id}
             environmentId={selectedThread.environmentId}
             folders={[
               selectedThread.worktreePath,

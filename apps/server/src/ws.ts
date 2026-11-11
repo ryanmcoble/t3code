@@ -1,4 +1,5 @@
 import * as ContainerMonitor from "./containers/ContainerMonitor.ts";
+import * as ManagedContainers from "./containers/ManagedContainers.ts";
 import * as ComputerUse from "./computer/ComputerUse.ts";
 import * as SharedMemory from "./memory/SharedMemory.ts";
 import * as SetupProfiles from "./setupProfiles/SetupProfiles.ts";
@@ -1349,6 +1350,7 @@ export const layerWsRpc = (
       const memory = yield* SharedMemory.SharedMemory;
       const computer = yield* ComputerUse.ComputerUse;
       const containers = yield* ContainerMonitor.ContainerMonitor;
+      const managedContainers = yield* ManagedContainers.ManagedContainers;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -2516,6 +2518,9 @@ export const layerWsRpc = (
         [WS_METHODS.containersSnapshot]: () => containers.refresh,
         [WS_METHODS.containersLogs]: (input) => containers.logs(input),
         [WS_METHODS.containersAssociate]: (input) => containers.associate(input),
+        [WS_METHODS.containersManagedList]: (input) => managedContainers.list(input.threadId),
+        [WS_METHODS.containersManagedCreate]: (input) => managedContainers.create(input),
+        [WS_METHODS.containersManagedCommand]: (input) => managedContainers.command(input),
         [WS_METHODS.computerUseState]: () => computer.state,
         [WS_METHODS.computerUseCommand]: (input) => computer.command(input),
         [WS_METHODS.memoryState]: () => memory.state,

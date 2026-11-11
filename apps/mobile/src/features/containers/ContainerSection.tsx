@@ -7,6 +7,7 @@ import {
   type ContainerSnapshot,
   type ContainerFolderRule,
   type EnvironmentId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   containerPanelSummary,
@@ -28,6 +29,7 @@ import { serverEnvironment } from "../../state/server";
 import { sharedCapabilities } from "../../state/sharedCapabilities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { ManagedContainerList } from "./ManagedContainerList";
 
 function subscribeActivity(listener: () => void) {
   const subscription = AppState.addEventListener("change", listener);
@@ -38,9 +40,11 @@ const isActive = () => AppState.currentState === "active";
 export function ContainerSection({
   environmentId,
   folders,
+  threadId,
 }: {
   readonly environmentId: EnvironmentId;
   readonly folders?: ReadonlyArray<string>;
+  readonly threadId?: ThreadId;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [cachedSummary, setCachedSummary] = useState("View this environment’s Docker containers");
@@ -82,6 +86,7 @@ export function ContainerSection({
           <ContainerList
             environmentId={environmentId}
             snapshot={snapshot}
+            {...(threadId ? { threadId } : {})}
             {...(folders ? { folders } : {})}
           />
         )
@@ -94,10 +99,12 @@ function ContainerList({
   environmentId,
   folders,
   snapshot,
+  threadId,
 }: {
   readonly environmentId: EnvironmentId;
   readonly folders?: ReadonlyArray<string>;
   readonly snapshot: EnvironmentQueryView<ContainerSnapshot>;
+  readonly threadId?: ThreadId;
 }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ContainerFilter>("all");
@@ -202,6 +209,11 @@ function ContainerList({
           </Text>
         </View>
       ) : null}
+      <ManagedContainerList
+        environmentId={environmentId}
+        {...(threadId ? { threadId } : {})}
+        {...(data ? { snapshot: data } : {})}
+      />
     </View>
   );
 }
