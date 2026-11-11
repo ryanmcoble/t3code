@@ -8,6 +8,7 @@ import {
   ProjectFolderTransferError,
   ProjectFolderSyncState,
   type ProjectFolderStatusResult,
+  type ProjectFolderContentPolicy,
   type ProjectFolderEntry,
   type ProjectFolderExportInput,
   type ProjectFolderExportResult,
@@ -16,6 +17,7 @@ import {
   type ProjectFolderReadInput,
   type ProjectFolderWriteInput,
 } from "@t3tools/contracts";
+import { compileProjectContentPolicy } from "@t3tools/shared/projectContentPolicy";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -40,6 +42,7 @@ interface Transfer {
   readonly modified: Map<string, number>;
   readonly previousEntries?: ReadonlyArray<ProjectFolderEntry>;
   readonly incremental?: boolean;
+  readonly contentPolicy?: ProjectFolderContentPolicy;
   touchedAt: number;
 }
 
@@ -136,9 +139,15 @@ const make = Effect.gen(function* () {
     const relative = path.relative(root, candidate);
     return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
   };
-  const validate = (entries: ReadonlyArray<ProjectFolderEntry>) => {
+  const validate = (
+    entries: ReadonlyArray<ProjectFolderEntry>,
+    contentPolicy?: ProjectFolderContentPolicy,
+  ) => {
+    const include = contentPolicy ? compileProjectContentPolicy(contentPolicy) : null;
+    if (contentPolicy && !include) fail("invalid_path");
     const seen = new Map<string, ProjectFolderEntry>();
     for (const entry of entries) {
+      if (include && !include(entry.path)) fail("invalid_path");
       // Use portable names, including when the sender and recipient use different operating systems.
       if (
         entry.path
@@ -163,7 +172,14 @@ const make = Effect.gen(function* () {
           target.includes(":") ||
           target.includes("\0") ||
           path.isAbsolute(target) ||
-          !inside("/root", path.resolve("/root", path.dirname(entry.path), target))
+          !inside("/root", path.resolve("/root", path.dirname(entry.path), target)) ||
+          (include &&
+            !include(
+              path
+                .relative("/root", path.resolve("/root", path.dirname(entry.path), target))
+                .split(path.sep)
+                .join("/"),
+            ))
         )
           fail("unsupported_entry");
       }
@@ -208,7 +224,9 @@ const make = Effect.gen(function* () {
     return transfer;
   };
 
-  const scan = async (root: string) => {
+  const scan = async (root: string, contentPolicy?: ProjectFolderContentPolicy) => {
+    const include = contentPolicy ? compileProjectContentPolicy(contentPolicy) : null;
+    if (contentPolicy && !include) fail("invalid_path");
     root = await NodeFSP.realpath(root);
     const entries: ProjectFolderEntry[] = [];
     const modified = new Map<string, number>();
@@ -221,6 +239,7 @@ const make = Effect.gen(function* () {
     const walk = async (directory: string) => {
       for (const name of await NodeFSP.readdir(path.join(root, directory))) {
         const relative = directory ? `${directory}/${name}` : name;
+        if (include && !include(relative)) continue;
         const absolute = path.join(root, relative);
         const stat = await NodeFSP.lstat(absolute);
         const kind = stat.isDirectory()
@@ -254,6 +273,17 @@ const make = Effect.gen(function* () {
             cached.set(relative, { signature, hash });
         }
         const linkTarget = kind === "symlink" ? await NodeFSP.readlink(absolute) : undefined;
+        if (
+          kind === "symlink" &&
+          include &&
+          !include(
+            path
+              .relative(root, path.resolve(path.dirname(absolute), linkTarget!))
+              .split(path.sep)
+              .join("/"),
+          )
+        )
+          fail("unsupported_entry");
         if (kind === "symlink" && !inside(root, await NodeFSP.realpath(absolute)))
           fail("unsupported_entry");
         entries.push({
@@ -271,7 +301,7 @@ const make = Effect.gen(function* () {
     };
     await walk("");
     for (const key of cached.keys()) if (!seenFiles.has(key)) cached.delete(key);
-    validate(entries);
+    validate(entries, contentPolicy);
     return { entries, modified, statsByPath };
   };
   const same = (
@@ -468,7 +498,7 @@ const make = Effect.gen(function* () {
 
   const exportFolder: ProjectFolderTransfer["Service"]["exportFolder"] = Effect.fn(
     "ProjectFolderTransfer.exportFolder",
-  )(function* ({ cwd }) {
+  )(function* ({ cwd, contentPolicy }) {
     yield* knownWorkspaces
       .assertContains(cwd)
       .pipe(
@@ -479,7 +509,7 @@ const make = Effect.gen(function* () {
     return yield* io(async () => {
       await prune();
       const root = await NodeFSP.realpath(expandHomePath(cwd, home));
-      const { entries, modified } = await scan(root);
+      const { entries, modified } = await scan(root, contentPolicy);
       const transferId = NodeCrypto.randomUUID();
       sessions.set(transferId, {
         kind: "export",
@@ -491,6 +521,7 @@ const make = Effect.gen(function* () {
         pendingOffsets: new Map(),
         modified,
         touchedAt: clock.currentTimeMillisUnsafe(),
+        ...(contentPolicy ? { contentPolicy } : {}),
       });
       return { transferId, entries };
     });
@@ -510,7 +541,11 @@ const make = Effect.gen(function* () {
     return yield* io(async () => {
       await prune();
       if (input.incremental && input.previousEntries === undefined) fail("invalid_path");
-      validate(input.entries);
+      // Whole-folder replacement would discard destination files excluded from replication.
+      if (input.contentPolicy && input.previousEntries !== undefined && !input.incremental)
+        fail("invalid_path");
+      validate(input.entries, input.contentPolicy);
+      if (input.previousEntries) validate(input.previousEntries, input.contentPolicy);
       const destination = path.resolve(expandHomePath(input.destinationPath, home));
       if (input.previousEntries === undefined) {
         if (
@@ -522,7 +557,8 @@ const make = Effect.gen(function* () {
         )
           fail("destination_exists");
       } else {
-        if (!same((await scan(destination)).entries, input.previousEntries)) fail("source_changed");
+        if (!same((await scan(destination, input.contentPolicy)).entries, input.previousEntries))
+          fail("source_changed");
       }
       await NodeFSP.mkdir(path.dirname(destination), { recursive: true });
       const root = await NodeFSP.mkdtemp(path.join(path.dirname(destination), ".t3-folder-"));
@@ -532,6 +568,7 @@ const make = Effect.gen(function* () {
         incremental: input.incremental === true,
         root,
         destination,
+        ...(input.contentPolicy ? { contentPolicy: input.contentPolicy } : {}),
         entries: input.entries,
         entriesByPath: new Map(input.entries.map((entry) => [entry.path, entry])),
         ...(input.previousEntries === undefined ? {} : { previousEntries: input.previousEntries }),
@@ -691,7 +728,7 @@ const make = Effect.gen(function* () {
               else if (entry.kind === "file" && (!retained(entry) || hasLinks))
                 await NodeFSP.chmod(absolute, entry.mode & 0o777);
             }
-            const staged = await scan(transfer.root);
+            const staged = await scan(transfer.root, transfer.contentPolicy);
             const stagedEntriesByPath = new Map(staged.entries.map((entry) => [entry.path, entry]));
             const expectedFiles = transfer.entries.filter(
               (entry) => entry.kind === "file" && !retained(entry),
@@ -706,7 +743,7 @@ const make = Effect.gen(function* () {
               await NodeFSP.chmod(path.join(transfer.root, entry.path), entry.mode & 0o777);
             const destination = transfer.destination!;
             if (transfer.previousEntries !== undefined) {
-              const current = await scan(destination);
+              const current = await scan(destination, transfer.contentPolicy);
               if (!same(current.entries, transfer.previousEntries)) fail("source_changed");
               if (transfer.incremental) {
                 await applyIncrementalSync(transfer, current);
@@ -754,7 +791,10 @@ const make = Effect.gen(function* () {
         if (!transfer) return;
         if (transfer.kind !== "export") fail("invalid_session");
         try {
-          if (input.validate && !same((await scan(transfer.root)).entries, transfer.entries))
+          if (
+            input.validate &&
+            !same((await scan(transfer.root, transfer.contentPolicy)).entries, transfer.entries)
+          )
             fail("source_changed");
         } finally {
           sessions.delete(input.transferId);

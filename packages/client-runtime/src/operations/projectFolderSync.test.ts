@@ -12,6 +12,15 @@ const file = (path: string, hash: string): ProjectFolderEntry => ({
 });
 
 describe("planFolderSync", () => {
+  it("keeps files with missing content hashes in conflict instead of assuming equal bytes", () => {
+    const unknown: ProjectFolderEntry = {
+      path: "notes.txt",
+      kind: "file",
+      byteLength: 3,
+      mode: 0o644,
+    };
+    expect(planFolderSync([unknown], [unknown], [unknown]).conflicts).toEqual(["notes.txt"]);
+  });
   it("identifies a synced project by its machine and exact folder instead of its title", () => {
     const projects = [
       { environmentId: EnvironmentId.make("other"), workspaceRoot: "/remote/Crypto" },

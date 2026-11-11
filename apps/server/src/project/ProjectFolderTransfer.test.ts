@@ -64,6 +64,84 @@ const fixture = Effect.gen(function* () {
   return { root, source, destination, service: yield* ProjectFolderTransfer.ProjectFolderTransfer };
 });
 
+it.effect(
+  "filters project replication before reading excluded trees, and rejects injected excluded entries and baselines",
+  () =>
+    Effect.gen(function* () {
+      const { source, destination, service } = yield* fixture;
+      const contentPolicy = { mode: "project-content" as const, excludePaths: ["private-notes"] };
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.join(source, "node_modules"));
+        await NodeFSP.mkdir(NodePath.join(source, ".git"));
+        await NodeFSP.writeFile(NodePath.join(source, ".env"), "secret-test-value");
+        await NodeFSP.writeFile(NodePath.join(source, "private-notes"), "private-test-value");
+        await NodeFSP.writeFile(NodePath.join(source, "README.md"), "public source");
+        await NodeFSP.writeFile(NodePath.join(source, "node_modules", "generated"), "generated");
+        await NodeFSP.writeFile(NodePath.join(source, ".git", "config"), "private remote");
+      });
+      const exported = yield* service.exportFolder({ cwd: source, contentPolicy });
+      expect(exported.entries.map((entry) => entry.path)).toEqual(["README.md"]);
+      yield* service.exportEnd({ transferId: exported.transferId, validate: true });
+      const injected = { path: ".env", kind: "file" as const, byteLength: 0, mode: 0o600 };
+      for (const entries of [[injected], [{ ...injected, path: ".git" }]]) {
+        const result = yield* service
+          .importFolder({ destinationPath: destination, entries, contentPolicy })
+          .pipe(Effect.result);
+        expect(result._tag).toBe("Failure");
+      }
+      const baseline = yield* service
+        .importFolder({
+          destinationPath: destination,
+          entries: [],
+          previousEntries: [injected],
+          incremental: true,
+          contentPolicy,
+        })
+        .pipe(Effect.result);
+      expect(baseline._tag).toBe("Failure");
+      const complete = yield* service.exportFolder({ cwd: source });
+      expect(complete.entries.some((entry) => entry.path === ".env")).toBe(true);
+      yield* service.exportEnd({ transferId: complete.transferId, validate: true });
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("preserves excluded destination files during incremental project content updates", () =>
+  Effect.gen(function* () {
+    const { source, destination, service } = yield* fixture;
+    const contentPolicy = { mode: "project-content" as const, excludePaths: [] };
+    yield* Effect.promise(async () => {
+      await NodeFSP.mkdir(destination);
+      await NodeFSP.writeFile(NodePath.join(destination, ".env"), "local-only-test-secret");
+      await NodeFSP.writeFile(NodePath.join(destination, "old.txt"), "old");
+    });
+    const previous = yield* service.exportFolder({ cwd: destination, contentPolicy });
+    const next = yield* service.exportFolder({ cwd: source, contentPolicy });
+    const replacement = yield* service
+      .importFolder({
+        destinationPath: destination,
+        entries: next.entries,
+        previousEntries: previous.entries,
+        contentPolicy,
+      })
+      .pipe(Effect.result);
+    expect(replacement._tag).toBe("Failure");
+    const imported = yield* service.importFolder({
+      destinationPath: destination,
+      entries: next.entries,
+      previousEntries: previous.entries,
+      incremental: true,
+      contentPolicy,
+    });
+    yield* service.finish(imported);
+    expect(yield* Effect.promise(() => NodeFSP.readdir(destination))).toEqual([".env"]);
+    expect(
+      yield* Effect.promise(() => NodeFSP.readFile(NodePath.join(destination, ".env"), "utf8")),
+    ).toBe("local-only-test-secret");
+    yield* service.exportEnd({ transferId: previous.transferId, validate: false });
+    yield* service.exportEnd({ transferId: next.transferId, validate: true });
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
 const commandAdapter =
   (requests: Queue.Queue<Effect.Effect<void>>) =>
   <I, A, E>(

@@ -16,7 +16,17 @@ export type ProjectFolderEntry = typeof ProjectFolderEntry.Type;
 
 export const ProjectFolderEntries = Schema.Array(ProjectFolderEntry);
 export const ProjectFolderSessionInput = Schema.Struct({ transferId: TrimmedNonEmptyString });
-export const ProjectFolderExportInput = Schema.Struct({ cwd: TrimmedNonEmptyString });
+export const ProjectFolderContentPolicy = Schema.Struct({
+  mode: Schema.Literal("project-content"),
+  excludePaths: Schema.Array(Schema.String.check(Schema.isMaxLength(4096))).check(
+    Schema.isMaxLength(128),
+  ),
+});
+export type ProjectFolderContentPolicy = typeof ProjectFolderContentPolicy.Type;
+export const ProjectFolderExportInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  contentPolicy: Schema.optionalKey(ProjectFolderContentPolicy),
+});
 export const ProjectFolderExportResult = Schema.Struct({
   transferId: TrimmedNonEmptyString,
   entries: ProjectFolderEntries,
@@ -26,6 +36,7 @@ export const ProjectFolderImportInput = Schema.Struct({
   entries: ProjectFolderEntries,
   previousEntries: Schema.optional(ProjectFolderEntries),
   incremental: Schema.optional(Schema.Boolean),
+  contentPolicy: Schema.optionalKey(ProjectFolderContentPolicy),
 });
 export const ProjectFolderImportResult = Schema.Struct({
   ...ProjectFolderSessionInput.fields,
