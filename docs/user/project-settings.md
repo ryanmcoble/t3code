@@ -88,6 +88,10 @@ uses the same server services: `t3 shared-project files status <project-id>`,
 `resolve <project-id> <root-id> --generation <reviewed-generation> --choice local|owner`.
 Use `--base-dir` for an isolated T3 home or `--environment` for a linked machine.
 File receiving must already be enabled; these commands do not grant new access.
+MCP connections need explicit filesystem grants for file inspection and recovery.
+New full-access approvals include these grants; older saved credentials retain
+their original permissions and may need a new approval. Local owner CLI sessions
+are temporary and are revoked when each command ends.
 
 Pause stops background definition updates. Refresh checks the owner immediately.
 Disconnect removes the local subscription credential and detaches local mappings,
