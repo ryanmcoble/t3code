@@ -530,6 +530,10 @@
     "./setup-profile-presentation": {
       "types": "./src/setupProfilePresentation.ts",
       "default": "./src/setupProfilePresentation.ts"
+    },
+    "./standalone-apps": {
+      "types": "./src/mcpApps/standalone.ts",
+      "default": "./src/mcpApps/standalone.ts"
     }
   },
   "scripts": {

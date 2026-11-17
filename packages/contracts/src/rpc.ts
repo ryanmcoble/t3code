@@ -9,6 +9,14 @@ import {
   ManagedContainerCreate,
   ManagedContainerCommand,
 } from "./containers.ts";
+import {
+  StandaloneAppDefinition,
+  StandaloneAppSummary,
+  StandaloneAppTarget,
+  StandaloneAppToolInput,
+  StandaloneAppOpenResult,
+  StandaloneAppError,
+} from "./standaloneApps.ts";
 import { ComputerUseState, ComputerUseCommand, ComputerUseError } from "./computerUse.ts";
 import {
   SharedProjectContentStateInput,
@@ -504,6 +512,12 @@ export const WS_METHODS = {
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
   attachmentsDelete: "attachments.delete",
 
+  appsList: "apps.list",
+  appsSave: "apps.save",
+  appsRemove: "apps.remove",
+  appsOpen: "apps.open",
+  appsRead: "apps.read",
+  appsWrite: "apps.write",
   mcpAppsCallTool: "mcpApps.callTool",
   mcpAppsToolInfo: "mcpApps.toolInfo",
   mcpAppsReadResource: "mcpApps.readResource",
@@ -1717,6 +1731,39 @@ const WsAttachmentsDeleteRpc = Rpc.make(WS_METHODS.attachmentsDelete, {
   error: EnvironmentAuthorizationError,
 });
 
+const WsStandaloneApps = [
+  Rpc.make(WS_METHODS.appsList, {
+    payload: Schema.Struct({}),
+    success: Schema.Array(StandaloneAppSummary),
+    error: Schema.Union([StandaloneAppError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(WS_METHODS.appsSave, {
+    payload: StandaloneAppDefinition,
+    success: Schema.Void,
+    error: Schema.Union([StandaloneAppError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(WS_METHODS.appsRemove, {
+    payload: StandaloneAppTarget,
+    success: Schema.Void,
+    error: Schema.Union([StandaloneAppError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(WS_METHODS.appsOpen, {
+    payload: StandaloneAppTarget,
+    success: StandaloneAppOpenResult,
+    error: Schema.Union([StandaloneAppError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(WS_METHODS.appsRead, {
+    payload: StandaloneAppToolInput,
+    success: McpAppCallToolResult,
+    error: Schema.Union([StandaloneAppError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(WS_METHODS.appsWrite, {
+    payload: StandaloneAppToolInput,
+    success: McpAppCallToolResult,
+    error: Schema.Union([StandaloneAppError, EnvironmentAuthorizationError]),
+  }),
+];
+
 const WsMcpAppsCallToolRpc = Rpc.make(WS_METHODS.mcpAppsCallTool, {
   payload: McpAppCallToolInput,
   success: McpAppCallToolResult,
@@ -2454,6 +2501,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,
   WsAttachmentsDeleteRpc,
+  ...WsStandaloneApps,
   WsMcpAppsCallToolRpc,
   WsMcpAppsToolInfoRpc,
   WsMcpAppsReadResourceRpc,

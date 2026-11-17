@@ -40,12 +40,16 @@ describe("RPC authorization scopes", () => {
 
   it("separates folder reads from writes and sync mutations", () => {
     for (const method of [
+      WS_METHODS.appsList,
+      WS_METHODS.appsOpen,
+      WS_METHODS.appsRead,
       WS_METHODS.projectsFolderExport,
       WS_METHODS.projectsFolderRead,
       WS_METHODS.projectsFolderSyncGet,
     ])
       expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemReadScope);
     for (const method of [
+      WS_METHODS.appsWrite,
       WS_METHODS.projectsFolderImport,
       WS_METHODS.projectsFolderWrite,
       WS_METHODS.projectsFolderFinish,
@@ -53,6 +57,11 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.projectsFolderSyncSet,
     ])
       expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemWriteScope);
+  });
+
+  it("requires settings permission to install or remove an app executable", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.appsSave)).toBe(AuthSettingsWriteScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.appsRemove)).toBe(AuthSettingsWriteScope);
   });
 
   it("keeps webhook delivery logs, which hold request bodies, behind operate scope", () => {

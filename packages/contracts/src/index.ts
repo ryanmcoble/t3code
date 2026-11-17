@@ -78,3 +78,4 @@ export * from "./sharedMemory.ts";
 export * from "./computerUse.ts";
 
 export * from "./containers.ts";
+export * from "./standaloneApps.ts";
