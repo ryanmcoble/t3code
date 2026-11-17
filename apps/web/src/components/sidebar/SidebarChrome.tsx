@@ -280,6 +280,14 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           ) : null}
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}
+            label="Apps"
+            onClick={() => {
+              closeMobileSidebar();
+              void navigate({ to: "/apps", search: {} });
+            }}
+          />
+          <SidebarUtilityItem
+            icon={<ChartNoAxesColumnIcon />}
             label="Usage"
             onClick={handleUsageClick}
           />

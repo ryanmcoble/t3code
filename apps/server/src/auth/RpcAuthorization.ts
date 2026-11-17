@@ -38,6 +38,9 @@ import type * as RpcGroup from "effect/rpc/RpcGroup";
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
 
 export const RPC_REQUIRED_SCOPES = {
+  [WS_METHODS.appsList]: AuthFilesystemReadScope,
+  [WS_METHODS.appsOpen]: AuthFilesystemReadScope,
+  [WS_METHODS.appsRead]: AuthFilesystemReadScope,
   ...CLIENT_GUARDED_RPC_SCOPES,
   [WS_METHODS.memoryState]: AuthSettingsWriteScope,
   [WS_METHODS.memoryStatus]: AuthSettingsWriteScope,
