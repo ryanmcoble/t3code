@@ -1,3 +1,4 @@
+import * as StandaloneApps from "./mcpApps/StandaloneApps.ts";
 import * as ComputerUse from "./computer/ComputerUse.ts";
 import * as SharedMemory from "./memory/SharedMemory.ts";
 import * as SetupProfiles from "./setupProfiles/SetupProfiles.ts";
@@ -1249,6 +1250,7 @@ export const layerWsRpc = (
       const threadSearch = yield* ThreadSearch.ThreadSearch;
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const standaloneApps = yield* StandaloneApps.StandaloneApps;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
       const analytics = yield* AnalyticsService.AnalyticsService;
       const originProps = clientAnalyticsProps;
@@ -1794,6 +1796,7 @@ export const layerWsRpc = (
           },
           settings,
           shellResumeCompletionMarker: true,
+          standaloneApps: true,
           shellThreadFamilies: true,
           shellOlderSettled: true,
           threadResumeCompletionMarker: true,
@@ -2379,6 +2382,12 @@ export const layerWsRpc = (
                 })),
             };
           }),
+        [WS_METHODS.appsList]: () => standaloneApps.list(),
+        [WS_METHODS.appsSave]: (input) => standaloneApps.save(input),
+        [WS_METHODS.appsRemove]: (input) => standaloneApps.remove(input.appId),
+        [WS_METHODS.appsOpen]: (input) => standaloneApps.open(input.appId),
+        [WS_METHODS.appsRead]: (input) => standaloneApps.call(input, false),
+        [WS_METHODS.appsWrite]: (input) => standaloneApps.call(input, true),
         [WS_METHODS.mcpAppsCallTool]: (input) => mcpAppRequests.callTool(input),
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),
         [WS_METHODS.mcpAppsUpdateModelContext]: (input) => mcpAppRequests.updateModelContext(input),

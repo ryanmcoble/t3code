@@ -1,3 +1,4 @@
+import { installedAppsAtom } from "../state/mcpApps";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { dispatchMenuAction } from "../shortcuts/dispatcher";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -1515,6 +1516,17 @@ function OpenCommandPaletteDialog(props: {
 
   actionItems.push({
     kind: "action",
+    value: "action:apps",
+    title: "Open apps",
+    searchTerms: ["apps", "extensions"],
+    icon: <ChartNoAxesColumnIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/apps", search: {} });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
     value: "action:usage",
     searchTerms: ["usage", "use", "tokens", "cost", "spend", "limits", "stats", "analytics"],
     title: "Open usage",
@@ -1588,6 +1600,21 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
+  const installedApps = useAtomValue(installedAppsAtom);
+  for (const app of installedApps)
+    actionItems.push({
+      kind: "action",
+      value: `app:${app.environmentId}:${app.id}`,
+      title: `Open ${app.title}`,
+      searchTerms: [...app.keywords, "app"],
+      icon: <ChartNoAxesColumnIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({
+          to: "/apps",
+          search: { environmentId: app.environmentId, appId: app.id },
+        });
+      },
+    });
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
   // Every setting goes to the palette's own matcher, so settings get the same
   // word starts and typo tolerance as threads.

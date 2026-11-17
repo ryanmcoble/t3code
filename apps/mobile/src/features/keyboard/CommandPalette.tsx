@@ -1,3 +1,5 @@
+import { installedAppsAtom, requestedAppAtom } from "../../state/mcpApps";
+import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomValue } from "@effect/atom-react";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
@@ -279,6 +281,7 @@ export function CommandPalette(props: {
     supportsTriage: (environmentId) =>
       serverConfigs.get(environmentId)?.environment.capabilities.triage === true,
   });
+  const installedApps = useAtomValue(installedAppsAtom);
   const canTriage =
     useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
     triageEnvironmentId !== null &&
@@ -333,6 +336,13 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsScheduledTasks"),
       },
       {
+        key: "apps",
+        kind: "action",
+        title: "Open apps",
+        searchTerms: ["extensions"],
+        run: () => selectTab("apps"),
+      },
+      {
         key: "usage",
         kind: "action",
         title: "Usage",
@@ -347,6 +357,21 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
+    actions.push(
+      ...installedApps.map((app): CommandPaletteItem => ({
+        key: `app:${app.environmentId}:${app.id}`,
+        kind: "action",
+        title: `Open ${app.title}`,
+        searchTerms: [...app.keywords, "app"],
+        run: () => {
+          appAtomRegistry.set(requestedAppAtom, {
+            environmentId: app.environmentId,
+            appId: app.id,
+          });
+          selectTab("apps");
+        },
+      })),
+    );
     if (canTriage) {
       actions.push({
         key: "triage",
@@ -464,6 +489,7 @@ export function CommandPalette(props: {
     activeThread,
     activeThreadRef,
     environments.length,
+    installedApps,
     canTriage,
     navigation,
     projects,

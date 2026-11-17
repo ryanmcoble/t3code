@@ -83,7 +83,7 @@ export function WorkspaceRootScreen() {
         <SafeAreaInsetsContext
           value={
             floatingTabsEnabled
-              ? tab === "usage"
+              ? tab === "usage" || tab === "apps"
                 ? { ...insets, bottom: context.bottomClearance }
                 : insets
               : { ...insets, bottom: 0 }

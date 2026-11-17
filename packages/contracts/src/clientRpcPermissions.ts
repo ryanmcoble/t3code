@@ -17,6 +17,9 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.appsSave]: AuthSettingsWriteScope,
+  [WS_METHODS.appsRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.appsWrite]: AuthFilesystemWriteScope,
   [WS_METHODS.computerUseCommand]: AuthSettingsWriteScope,
   [WS_METHODS.memoryCommand]: AuthSettingsWriteScope,
   [WS_METHODS.memoryExport]: AuthSettingsWriteScope,

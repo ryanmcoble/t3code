@@ -76,6 +76,7 @@ export class McpAppHostRefusal extends Error {}
 export interface McpAppHostOptions {
   readonly app: McpAppReference;
   readonly hostVersion: string;
+  readonly standalone?: boolean;
   readonly post: (message: unknown) => void;
   readonly hostContext: () => McpAppHostContext;
 
@@ -217,9 +218,13 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
             serverTools: {},
             serverResources: {},
             logging: {},
-            message: { text: {} },
-            updateModelContext: { text: {}, structuredContent: {} },
-            downloadFile: {},
+            ...(options.standalone
+              ? { experimental: { "t3/view-state": {} } }
+              : {
+                  message: { text: {} },
+                  updateModelContext: { text: {}, structuredContent: {} },
+                  downloadFile: {},
+                }),
             sandbox: {
               ...(options.app.csp === undefined ? {} : { csp: options.app.csp }),
               ...(options.app.permissions === undefined
@@ -259,8 +264,11 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
       }
       case "ui/open-link": {
         const url = params.url;
-        if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
-          fail(id, -32602, "Only http(s) links can be opened.");
+        if (
+          typeof url !== "string" ||
+          (!/^https?:\/\//i.test(url) && !(options.standalone && /^t3-thread:/i.test(url)))
+        ) {
+          fail(id, -32602, "This link protocol is not supported.");
           return;
         }
         answer(id, () => options.openLink(url).then(() => ({})));
