@@ -28,7 +28,6 @@ import {
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
-  DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   parseGenericCliVersion,
   providerModelsFromSettings,
@@ -188,6 +187,8 @@ function claudeAuthStatus(
 
 // Bedrock initialization includes backend startup and awsAuthRefresh, taking longer than first-party auth.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
+// Subscription reads can exceed the four-second local CLI probe budget on a cold connection.
+const CLAUDE_USAGE_PROBE_TIMEOUT_MS = 15_000;
 // Native CLI startup on Windows can exceed the shared probe deadline.
 const CLAUDE_VERSION_CHECK_TIMEOUT_MS = 20_000;
 
@@ -363,7 +364,7 @@ const probeClaudeCapabilities = (
         const usageResult = includeUsage
           ? yield* Effect.tryPromise(() =>
               q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true }),
-            ).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result)
+            ).pipe(Effect.timeout(CLAUDE_USAGE_PROBE_TIMEOUT_MS), Effect.result)
           : undefined;
         const usage =
           usageResult && Result.isSuccess(usageResult)
