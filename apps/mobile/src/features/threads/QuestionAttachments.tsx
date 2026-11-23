@@ -5,7 +5,12 @@ import { TextInputWrapper } from "expo-paste-input";
 import { AppTextInput as TextInput } from "../../components/ui/AppText";
 import { useNativePaste } from "../../lib/useNativePaste";
 import { convertPastedImagesToAttachments } from "../../lib/composerImages";
-import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS, type UserInputQuestion } from "@t3tools/contracts";
+import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  type RuntimeRequestId,
+  type UserInputQuestion,
+} from "@t3tools/contracts";
+import { userInputDraftKey } from "@t3tools/client-runtime/state/thread-requests";
 import { useAtomValue } from "@effect/atom-react";
 import { View } from "react-native";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -13,6 +18,7 @@ import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { pickComposerFiles, pickComposerMedia } from "../../lib/composerImages";
 import { useThreadSelection } from "../../state/use-thread-selection";
+import { userInputDraftsByRequestKeyAtom } from "../../state/use-selected-thread-requests";
 import { useNavigation } from "@react-navigation/native";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
@@ -29,12 +35,20 @@ import {
   questionAttachmentDraftKey,
   questionAttachmentPreparationAtom,
 } from "../../state/question-attachments";
+import {
+  ComposerDictationCancelAction,
+  ComposerDictationPrimaryAction,
+  ComposerDictationStatus,
+} from "../voice-input/ComposerDictationControl";
+import { useVoiceInputController } from "../voice-input/useVoiceInputController";
+import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 
 export function QuestionAttachments(props: {
-  requestId: string;
+  requestId: RuntimeRequestId;
   question: UserInputQuestion;
   questions: ReadonlyArray<UserInputQuestion>;
   disabled: boolean;
+  collapsed: boolean;
   value: string;
   onChangeText: (value: string) => void;
   onInputFocusChange?: ((focused: boolean) => void) | undefined;
@@ -45,6 +59,40 @@ export function QuestionAttachments(props: {
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const configs = useServerConfigs();
   const drafts = useAtomValue(composerDraftsAtom);
+  const [selection, setSelection] = useState({
+    start: props.value.length,
+    end: props.value.length,
+  });
+  const key = selectedThread
+    ? questionAttachmentDraftKey(
+        selectedThread.environmentId,
+        selectedThread.id,
+        props.requestId,
+        props.question.id,
+      )
+    : null;
+  const requestKey = selectedThread
+    ? userInputDraftKey(selectedThread.environmentId, selectedThread.id, props.requestId)
+    : null;
+  const voice = useVoiceInputController({
+    ownerKey: props.collapsed || props.disabled ? null : key,
+    label: props.question.header,
+    disabled: props.disabled,
+    cancelOnBlur: true,
+    selection,
+    readDraftMessage: () => {
+      if (!requestKey) return null;
+      const draft = appAtomRegistry.get(userInputDraftsByRequestKeyAtom)[requestKey]?.[
+        props.question.id
+      ];
+      return draft?.customAnswer ?? props.question.initialAnswer ?? "";
+    },
+    subscribeToDraftChanges: (onChange) =>
+      appAtomRegistry.subscribe(userInputDraftsByRequestKeyAtom, onChange),
+    onChangeDraftMessage: props.onChangeText,
+    onChangeSelection: setSelection,
+  });
+  const presentation = resolveVoiceComposerPresentation(voice.state, voice.elapsedSeconds);
   const focusedRef = useRef(false);
   const onInputFocusChange = props.onInputFocusChange;
   // The caller keys this component by request and question, so unmounting ends any open
@@ -85,13 +133,14 @@ export function QuestionAttachments(props: {
   };
   const paste = useNativePaste((uris) => {
     const scope = pickerScope.current;
-    if (!selectedThread || props.disabled || !configs.get(selectedThread.environmentId)) return;
-    const key = questionAttachmentDraftKey(
-      selectedThread.environmentId,
-      selectedThread.id,
-      props.requestId,
-      props.question.id,
-    );
+    if (
+      !key ||
+      !selectedThread ||
+      props.disabled ||
+      voice.isBusy ||
+      !configs.get(selectedThread.environmentId)
+    )
+      return;
     changeQuestionAttachmentPreparation(key, 1);
     void convertPastedImagesToAttachments({
       uris,
@@ -114,16 +163,10 @@ export function QuestionAttachments(props: {
       )
       .finally(() => changeQuestionAttachmentPreparation(key, -1));
   });
-  if (!selectedThread || props.question.allowCustomAnswer === false) return null;
+  if (!key || !selectedThread || props.question.allowCustomAnswer === false) return null;
   const { environmentId, id: threadId } = selectedThread;
   const capabilities = configs.get(environmentId)?.environment.capabilities;
   const canAttach = capabilities !== undefined;
-  const key = questionAttachmentDraftKey(
-    environmentId,
-    threadId,
-    props.requestId,
-    props.question.id,
-  );
   const attachments = drafts[key]?.attachments ?? [];
   const pick = async (kind: "media" | "files") => {
     const scope = pickerScope.current;
@@ -161,19 +204,40 @@ export function QuestionAttachments(props: {
   };
   return (
     <View className="gap-2">
-      {canAttach ? (
-        <ComposerAttachmentButton
-          disabled={props.disabled}
-          supportsFiles
-          onPickMedia={() => pick("media")}
-          onPickFiles={() => pick("files")}
-        />
+      {canAttach || voice.isAvailable || presentation.statusLabel ? (
+        <View className="flex-row items-center">
+          {canAttach ? (
+            <ComposerAttachmentButton
+              disabled={props.disabled || voice.isBusy}
+              supportsFiles
+              onPickMedia={() => pick("media")}
+              onPickFiles={() => pick("files")}
+            />
+          ) : null}
+          <ComposerDictationCancelAction presentation={presentation} onCancel={voice.cancel} />
+          <ComposerDictationStatus
+            audioLevels={voice.audioLevels}
+            elapsedSeconds={voice.elapsedSeconds}
+            phase={voice.state.phase}
+            presentation={presentation}
+            onDismissError={voice.cancel}
+          />
+          <ComposerDictationPrimaryAction
+            state={voice.state}
+            presentation={presentation}
+            isAvailable={voice.isAvailable}
+            disabled={props.disabled}
+            onStart={voice.start}
+            onConfirm={voice.stop}
+            onCancel={voice.cancel}
+          />
+        </View>
       ) : null}
       <ComposerAttachmentStrip
         environmentId={environmentId}
         attachments={attachments}
         onRemove={(id) => {
-          if (!props.disabled) removeComposerDraftAttachment(key, id);
+          if (!props.disabled && !voice.isBusy) removeComposerDraftAttachment(key, id);
         }}
         onPressPreview={setPreviewFile}
         onPressVideo={(attachment, sourceIdentifier) =>
@@ -198,7 +262,9 @@ export function QuestionAttachments(props: {
           value={props.value}
           multiline={props.question.initialAnswer !== undefined}
           submitBehavior={props.question.initialAnswer !== undefined ? "newline" : undefined}
-          editable={!props.disabled}
+          editable={!props.disabled && !voice.freezesEditor}
+          selection={selection}
+          onSelectionChange={({ nativeEvent }) => setSelection(nativeEvent.selection)}
           onChangeText={props.onChangeText}
           onFocus={() => {
             focusedRef.current = true;

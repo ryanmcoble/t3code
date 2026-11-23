@@ -29,6 +29,9 @@ import {
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
 import type { PendingUserInput } from "../../lib/threadActivity";
+import { questionAttachmentDraftKey } from "../../state/question-attachments";
+import { useThreadSelection } from "../../state/use-thread-selection";
+import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 
 export interface PendingUserInputCardProps {
   readonly environmentId: EnvironmentId;
@@ -79,6 +82,21 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
   const responseDisabled = !canRespond || isResponding;
+  const { selectedThread } = useThreadSelection();
+  const voice = useGlobalVoiceInput();
+  const isDictatingAnswer =
+    voice.isBusy &&
+    selectedThread !== null &&
+    props.pendingUserInput.questions.some(
+      (question) =>
+        voice.ownerKey ===
+        questionAttachmentDraftKey(
+          selectedThread.environmentId,
+          selectedThread.id,
+          props.pendingUserInput.requestId,
+          question.id,
+        ),
+    );
 
   const cardCoverage = props.cardCoverage;
   const barHeightRef = useRef(0);
@@ -231,8 +249,11 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                     <Pressable
                       key={optionValue}
                       accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
-                      accessibilityState={{ checked: selected, disabled: responseDisabled }}
-                      disabled={responseDisabled}
+                      accessibilityState={{
+                        checked: selected,
+                        disabled: responseDisabled || isDictatingAnswer,
+                      }}
+                      disabled={responseDisabled || isDictatingAnswer}
                       className={cn(
                         "min-h-12 w-full rounded-2xl border px-3.5 py-3",
                         selected ? "border-primary bg-primary/10" : "border-border bg-input",
@@ -270,7 +291,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   requestId={props.pendingUserInput.requestId}
                   question={question}
                   questions={props.pendingUserInput.questions}
-                  disabled={responseDisabled}
+                  disabled={responseDisabled || !props.canOperateThread}
+                  collapsed={props.collapsed}
                   value={draft?.customAnswer ?? ""}
                   onChangeText={(value) =>
                     props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
@@ -286,7 +308,9 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         label="Submit answers"
         fullWidth
         tone={props.answers ? "primary" : "secondary"}
-        disabled={!props.canOperateThread || responseDisabled || props.answers === null}
+        disabled={
+          !props.canOperateThread || responseDisabled || isDictatingAnswer || props.answers === null
+        }
         onPress={() => void props.onSubmit()}
       />
       {props.pendingUserInput.dismissible ? (
