@@ -1021,17 +1021,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const hasMultilinePrompt = prompt.includes("\n") || hasWrappedPrompt;
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const composerFormRef = useRef<HTMLFormElement>(null);
+  const voiceOwnerKey = questionAttachmentTarget ?? composerDraftTargetKey;
+  const voiceDisabled =
+    projectSelectionRequired ||
+    !canOperateThread ||
+    isEditingQueuedMessage ||
+    (activePendingProgress !== null &&
+      (!activePendingProgress.activeQuestion ||
+        activePendingProgress.activeQuestion.allowCustomAnswer === false ||
+        activePendingIsResponding));
   const voiceInput = useVoiceInput({
-    ownerKey: composerDraftTargetKey,
-    disabled:
-      projectSelectionRequired ||
-      !canOperateThread ||
-      activePendingProgress !== null ||
-      isEditingQueuedMessage,
+    ownerKey: voiceOwnerKey,
+    disabled: voiceDisabled,
     readDraft: () => {
-      const text = getComposerDraft(composerDraftTarget)?.prompt ?? "";
+      if (voiceDisabled) return null;
+      const text = activePendingProgress
+        ? activePendingProgress.customAnswer
+        : (getComposerDraft(composerDraftTarget)?.prompt ?? "");
       return {
-        ownerKey: composerDraftTargetKey,
+        ownerKey: voiceOwnerKey,
         text,
         selection: composerEditorRef.current?.readSelectionRange() ?? {
           start: text.length,
@@ -1041,6 +1049,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       };
     },
     subscribeDraftChanges: (onChange) => {
+      if (activePendingProgress) return () => {};
       let previous = getComposerDraft(composerDraftTarget)?.prompt ?? "";
       return useComposerDraftStore.subscribe(() => {
         const next = getComposerDraft(composerDraftTarget)?.prompt ?? "";
@@ -1050,16 +1059,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
       });
     },
+    focusDraft: () => composerEditorRef.current?.focus(),
     commitDraft: (text, selection) => {
-      promptRef.current = text;
-      setComposerDraftPrompt(composerDraftTarget, text);
-      onTypingGuardDraftChange();
-      const cursor = collapseExpandedComposerCursor(text, selection.end);
+      const cursor = collapseExpandedComposerCursor(text, selection.end, isLiteralPendingAnswer);
+      const question = activePendingProgress?.activeQuestion;
+      if (question) {
+        onChangeActivePendingUserInputCustomAnswer(
+          question.id,
+          text,
+          cursor,
+          selection.end,
+          isLiteralPendingAnswer,
+        );
+      } else {
+        promptRef.current = text;
+        setComposerDraftPrompt(composerDraftTarget, text);
+        onTypingGuardDraftChange();
+      }
       setComposerCursor(cursor);
-      setComposerTrigger(detectComposerTrigger(text, selection.end));
-      composerEditorRef.current?.focusAt(cursor);
+      setComposerTrigger(
+        isLiteralPendingAnswer ? null : detectComposerTrigger(text, selection.end),
+      );
     },
-    submitDraft: () => composerFormRef.current?.requestSubmit(),
+    submitDraft: activePendingProgress ? null : () => composerFormRef.current?.requestSubmit(),
   });
   const pasteAsTextShortcutUntilRef = useRef(0);
   // A pending question stays expanded: its card moves into the banner dock,
@@ -1252,11 +1274,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         questionIndex: activePendingProgress.questionIndex,
         isLastQuestion: activePendingProgress.isLastQuestion,
         canAdvance:
+          !voiceInput.busy &&
           activePendingProgress.canAdvance &&
           !attachmentBlockReason &&
           !(questionPreparations[attachmentTargetKey] ?? 0),
         isResponding: activePendingIsResponding,
-        isComplete: Boolean(activePendingResolvedAnswers),
+        isComplete: !voiceInput.busy && Boolean(activePendingResolvedAnswers),
       }
     : null;
   const showResumeAction =
@@ -1277,6 +1300,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
+  const composerVoiceControl =
+    voiceInput.available && (!voiceDisabled || activePendingProgress === null) ? (
+      <ComposerVoiceInput
+        state={voiceInput.state}
+        disabled={voiceDisabled}
+        onToggle={voiceInput.toggle}
+        onCancel={voiceInput.cancel}
+      />
+    ) : null;
 
   const setPrompt = (nextPrompt: string) => {
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
@@ -3194,7 +3226,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     pendingUserInputs={pendingUserInputs}
                     cwd={gitCwd ?? undefined}
                     threadRef={routeThreadRef}
-                    disabled={!canOperateThread}
+                    disabled={!canOperateThread || voiceInput.busy}
                     respondingRequestIds={
                       activePendingIsResponding && activePendingUserInput
                         ? [...respondingRequestIds, activePendingUserInput.requestId]
@@ -3435,6 +3467,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     data-chat-composer-mobile-pending-actions="true"
                     className="absolute bottom-0 right-0 flex items-center justify-end gap-1"
                   >
+                    {composerVoiceControl}
                     <ComposerPrimaryActions
                       compact
                       canOperateThread={canOperateThread}
@@ -3497,16 +3530,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   >
                     {composerControls}
                   </div>
-                  {voiceInput.available && activePendingProgress === null ? (
-                    <ComposerVoiceInput
-                      state={voiceInput.state}
-                      disabled={
-                        projectSelectionRequired || !canOperateThread || isEditingQueuedMessage
-                      }
-                      onToggle={voiceInput.toggle}
-                      onCancel={voiceInput.cancel}
-                    />
-                  ) : null}
+                  {showMobilePendingAnswerActions ? null : composerVoiceControl}
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}

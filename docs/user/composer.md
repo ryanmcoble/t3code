@@ -183,6 +183,10 @@ transcript in your draft instead. The stop button always transcribes into the dr
 for review. Cancel discards the recording and keeps your draft. Editing pauses
 while dictation is running.
 
+When an agent question accepts a custom answer, use the microphone next to the
+answer controls. Finish dictation to review the transcript in the answer field
+before submitting.
+
 In **Settings → Chat → Voice input**, choose Apple transcription, a custom server,
 or Off. These settings belong to the client: native transcription uses the Mac
 running the desktop app even when your coding agent runs on another machine.
@@ -218,6 +222,7 @@ setting off releases the Mac shortcut and keeps app-local dictation available.
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,
 then confirm to transcribe. Text is inserted where your selection was when
 recording started, ready for you to review and edit before sending.
+The microphone also appears on custom answer fields when an agent asks a question.
 
 The first use may download Apple's speech model and needs a network connection.
 Later transcription works offline for that language. Recordings can be up to five

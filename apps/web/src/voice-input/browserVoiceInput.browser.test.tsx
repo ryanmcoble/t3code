@@ -107,11 +107,14 @@ function globalShortcutFixture(
 function ComposerHarness({
   realEditor = false,
   ownerKey = "remote-environment:existing-thread",
+  isAnswer = false,
 }: {
   readonly realEditor?: boolean;
   readonly ownerKey?: string;
+  readonly isAnswer?: boolean;
 }) {
   const [text, setText] = useState("before after");
+  const [cursor, setCursor] = useState(7);
   const [submitted, setSubmitted] = useState(false);
   const [sentText, setSentText] = useState("");
   const [sendCount, setSendCount] = useState(0);
@@ -127,10 +130,12 @@ function ComposerHarness({
       revision: 0,
     }),
     subscribeDraftChanges: () => () => {},
-    commitDraft: (value) => {
+    focusDraft: () => editor.current?.focus(),
+    commitDraft: (value, selection) => {
       setText(value);
+      setCursor(selection.end);
     },
-    submitDraft: () => form.current?.requestSubmit(),
+    submitDraft: isAnswer ? null : () => form.current?.requestSubmit(),
   });
   return (
     <form
@@ -149,13 +154,16 @@ function ComposerHarness({
         <ComposerPromptEditorTiptap
           editorRef={editor}
           value={text}
-          cursor={7}
+          cursor={cursor}
           contextRecords={new Map()}
           skills={[]}
           disabled={voice.busy}
           placeholder="Message"
           ariaLabel="Message"
-          onChange={setText}
+          onChange={(value, nextCursor) => {
+            setText(value);
+            setCursor(nextCursor);
+          }}
           onPaste={() => {}}
         />
       ) : (
@@ -412,15 +420,19 @@ it.each([
 });
 
 it.each([
-  { sendOnEnter: true, realEditor: false },
-  { sendOnEnter: false, realEditor: false },
-  { sendOnEnter: true, realEditor: true },
+  { name: "message with send enabled", sendOnEnter: true, realEditor: false },
+  { name: "message with send disabled", sendOnEnter: false, realEditor: false },
+  { name: "rich editor", sendOnEnter: true, realEditor: true },
+  { name: "unfocused rich editor", sendOnEnter: true, realEditor: true, unfocused: true },
+  { name: "custom answer with send enabled", sendOnEnter: true, realEditor: true, isAnswer: true },
 ])(
-  "Enter finishes dictation with $sendOnEnter and real editor $realEditor",
-  async ({ sendOnEnter, realEditor }) => {
+  "Enter finishes dictation in a $name",
+  async ({ sendOnEnter, realEditor, unfocused, isAnswer }) => {
     setup(sendOnEnter);
     using recorder = recorderFixture();
-    await using screen = await render(<ComposerHarness realEditor={realEditor} />);
+    await using screen = await render(
+      <ComposerHarness realEditor={realEditor} isAnswer={isAnswer ?? false} />,
+    );
     using _permission = vi
       .spyOn(navigator.permissions, "query")
       .mockResolvedValue({ state: "granted" } as PermissionStatus);
@@ -432,7 +444,7 @@ it.each([
       if (String(url).startsWith("blob:")) return originalFetch(url);
       return Response.json({ text: "spoken text" });
     });
-    await screen.getByRole("textbox", { name: "Message" }).click();
+    if (!unfocused) await screen.getByRole("textbox", { name: "Message" }).click();
     await screen.getByRole("button", { name: "Start dictation" }).click();
     await expect.element(screen.getByRole("button", { name: "Finish dictation" })).toBeVisible();
     await expect.element(screen.getByRole("textbox", { name: "Message" })).toHaveFocus();
@@ -447,7 +459,7 @@ it.each([
       await expect
         .element(screen.getByRole("textbox", { name: "Message" }))
         .toHaveValue("before spoken text after");
-    if (sendOnEnter) {
+    if (sendOnEnter && !isAnswer) {
       await expect
         .element(screen.getByRole("status", { name: "Sent message" }))
         .toHaveTextContent("before spoken text after");
