@@ -122,7 +122,7 @@ export function VoiceInputSettings() {
           {native ? (
             <SettingsRow
               {...searchableSetting("voice-input-duck-other-audio")}
-              description="Lower your speaker or headphone volume to 20% while recording, so music or videos don't compete with your voice. The volume comes back when recording ends, unless you changed it meanwhile."
+              description="Lower your speaker or headphone volume to 20% while recording, so music or videos don't compete with your voice. Your original volume comes back when recording ends."
               control={
                 <Switch
                   checked={settings.duckOtherAudio}

@@ -10,7 +10,17 @@ enum NativeVoiceRecording {
         guard await AVCaptureDevice.requestAccess(for: .audio) else {
             throw TranscriptionFailure(message: "Allow microphone access for T3 Code in System Settings, then try again.")
         }
-        let recorder = try AVAudioRecorder(url: URL(fileURLWithPath: args[1]), settings: [
+        if let duckFraction { OutputDucker.start(at: duckFraction) }
+        defer { OutputDucker.restore() }
+        let command = try await capture(path: args[1], duration: duration)
+        OutputDucker.restore()
+        guard command == "stop" else { throw TranscriptionFailure(message: "Recording cancelled.") }
+        try AppleTranscription.emit(["event": "finished"])
+    }
+
+    @MainActor
+    private static func capture(path: String, duration: TimeInterval) async throws -> String? {
+        let recorder = try AVAudioRecorder(url: URL(fileURLWithPath: path), settings: [
             AVFormatIDKey: Int(kAudioFormatLinearPCM), AVSampleRateKey: 16000,
             AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 16,
             AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false,
@@ -19,13 +29,14 @@ enum NativeVoiceRecording {
         guard recorder.record(forDuration: duration) else {
             throw TranscriptionFailure(message: "Could not start the microphone.")
         }
-        if let duckFraction { OutputDucker.duck(to: duckFraction) }
-        defer { OutputDucker.restore() }
+        OutputDucker.refresh()
+        defer { recorder.stop() }
         try AppleTranscription.emit(["event": "ready"])
         // Report input loudness (0...1) about 20 times a second so the app can
         // show that audio is actually being captured.
         let meter = Task { @MainActor in
             while !Task.isCancelled && recorder.isRecording {
+                OutputDucker.refresh()
                 recorder.updateMeters()
                 try? AppleTranscription.emit(["event": "level", "level": normalizedLevel(recorder.averagePower(forChannel: 0))])
                 try? await Task.sleep(nanoseconds: 50_000_000)
@@ -35,10 +46,8 @@ enum NativeVoiceRecording {
             String(data: FileHandle.standardInput.availableData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
         }.value
         meter.cancel()
-        recorder.stop()
-        OutputDucker.restore()
-        guard command == "stop" else { throw TranscriptionFailure(message: "Recording cancelled.") }
-        try AppleTranscription.emit(["event": "finished"])
+        await meter.value
+        return command
     }
 
     /// Maps average power (-160...0 dBFS) to 0...1, treating -50 dBFS as silence.

@@ -22,6 +22,10 @@ struct AppleTranscription {
                 try await NativeVoiceRecording.run(args)
                 return
             }
+            if args.first == "restore-bluetooth-volume" {
+                OutputDucker.restoreBluetoothVolume(args)
+                return
+            }
             if args.first == "hotkey" {
                 try GlobalDictationHotkey.run(args)
                 return
