@@ -7,6 +7,7 @@ import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
@@ -121,7 +122,7 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-race-" })),
-  Layer.provide(NodeServices.layer),
+  Layer.provideMerge(NodeServices.layer),
 );
 
 const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* (
@@ -142,6 +143,52 @@ const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* 
 });
 
 it.layer(layerTest)("ProjectService", (it) => {
+  it.effect("waits for folder installation before moving or unregistering a project", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const project = yield* service.create({
+        commandId: CommandId.make("create-fenced"),
+        projectId: ProjectId.make("project:fenced"),
+        workspaceRoot: "/work/fenced-root",
+        title: "Fenced",
+      });
+      const release = yield* Deferred.make<void>();
+      const holder = yield* withWorkspaceLease("/work/fenced-root", Deferred.await(release)).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const changed = yield* service
+        .update({
+          projectId: project.id,
+          commandId: CommandId.make("move-fenced"),
+          workspaceRoot: "/work/fenced-next",
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      assert.equal(
+        Option.getOrThrow(yield* service.getById(project.id)).workspaceRoot,
+        "/work/fenced-root",
+      );
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+      yield* Fiber.join(changed);
+      assert.equal(
+        Option.getOrThrow(yield* service.getById(project.id)).workspaceRoot,
+        "/work/fenced-next",
+      );
+      const releaseDelete = yield* Deferred.make<void>();
+      const deleteHolder = yield* withWorkspaceLease(
+        "/work/fenced-next",
+        Deferred.await(releaseDelete),
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      const deleted = yield* service
+        .delete({ projectId: project.id, commandId: CommandId.make("delete-fenced") })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      assert.isTrue(Option.isSome(yield* service.getById(project.id)));
+      yield* Deferred.succeed(releaseDelete, undefined);
+      yield* Fiber.join(deleteHolder);
+      yield* Fiber.join(deleted);
+      assert.isTrue(Option.isNone(yield* service.getById(project.id)));
+    }),
+  );
   it.effect("creates, updates, resolves, snapshots, and soft-deletes projects", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;

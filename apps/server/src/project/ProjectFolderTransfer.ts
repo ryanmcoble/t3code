@@ -8,6 +8,7 @@ import {
   ProjectFolderTransferError,
   ProjectFolderSyncState,
   type ProjectFolderStatusResult,
+  type ProjectFolderContentPolicy,
   type ProjectFolderEntry,
   type ProjectFolderExportInput,
   type ProjectFolderExportResult,
@@ -16,6 +17,7 @@ import {
   type ProjectFolderReadInput,
   type ProjectFolderWriteInput,
 } from "@t3tools/contracts";
+import { compileProjectContentPolicy } from "@t3tools/shared/projectContentPolicy";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -23,11 +25,13 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Clock from "effect/Clock";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
+import * as WorkspaceMutationGuard from "../workspace/WorkspaceMutationGuard.ts";
 
 interface Transfer {
   readonly kind: "export" | "import";
@@ -40,15 +44,29 @@ interface Transfer {
   readonly modified: Map<string, number>;
   readonly previousEntries?: ReadonlyArray<ProjectFolderEntry>;
   readonly incremental?: boolean;
+  readonly contentPolicy?: ProjectFolderContentPolicy;
   touchedAt: number;
 }
 
 export class ProjectFolderTransfer extends Context.Service<
   ProjectFolderTransfer,
   {
+    readonly validateEntries: (input: {
+      readonly entries: ReadonlyArray<ProjectFolderEntry>;
+      readonly contentPolicy: ProjectFolderContentPolicy;
+    }) => Effect.Effect<void, ProjectFolderTransferError>;
     readonly status: (input: {
       cwd: string;
     }) => Effect.Effect<ProjectFolderStatusResult, ProjectFolderTransferError>;
+    readonly observeContent: (input: {
+      readonly cwd: string;
+      readonly observerId: string;
+      readonly contentPolicy: ProjectFolderContentPolicy;
+    }) => Effect.Effect<string, ProjectFolderTransferError>;
+    readonly releaseContentObservation: (input: {
+      readonly cwd: string;
+      readonly observerId: string;
+    }) => Effect.Effect<void, ProjectFolderTransferError>;
     readonly getSync: (input: {
       cwd: string;
     }) => Effect.Effect<ProjectFolderSyncState | null, ProjectFolderTransferError>;
@@ -90,11 +108,28 @@ const make = Effect.gen(function* () {
   const clock = yield* Clock.Clock;
   const home = yield* HostProcess.HomeDirectory;
   const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
+  const mutationGuard = yield* WorkspaceMutationGuard.WorkspaceMutationGuard;
   const locks = yield* KeyedLock.make<string>();
   const sessions = new Map<string, Transfer>();
   const watchers = new Map<
     string,
-    { identity: string; token: string; revision: number; watcher: NodeFS.FSWatcher }
+    {
+      identity: string;
+      token: string;
+      revision: number;
+      watcher: NodeFS.FSWatcher;
+      legacy: boolean;
+      shared: Map<
+        string,
+        {
+          policy: string;
+          token: string;
+          revision: number;
+          until: number;
+          include: (path: string) => boolean;
+        }
+      >;
+    }
   >();
   const hashCaches = new Map<string, Map<string, { signature: string; hash: string }>>();
   yield* Effect.addFinalizer(() =>
@@ -103,25 +138,56 @@ const make = Effect.gen(function* () {
       watchers.clear();
     }),
   );
-  const closeWatcher = (root: string) => {
-    watchers.get(root)?.watcher.close();
+  const closeWatcher = (root: string, force = false) => {
+    const current = watchers.get(root);
+    if (current && !force) {
+      current.legacy = false;
+      for (const [id, observer] of current.shared)
+        if (observer.until <= clock.currentTimeMillisUnsafe()) current.shared.delete(id);
+      if (current.shared.size) return;
+    }
+    current?.watcher.close();
     watchers.delete(root);
   };
-  const watchRevision = (root: string, identity: string) => {
+  const watchRevision = (root: string, identity: string, legacy = true) => {
     let current = watchers.get(root);
     if (current?.identity !== identity) {
-      closeWatcher(root);
-      const watcher = NodeFS.watch(root, { recursive: true }, () => {
+      closeWatcher(root, true);
+      const watcher = NodeFS.watch(root, { recursive: true }, (_event, filename) => {
         const entry = watchers.get(root);
-        if (entry) entry.revision++;
+        if (!entry) return;
+        entry.revision++;
+        const relative = filename?.toString().replace(/\\/g, "/");
+        for (const observer of entry.shared.values())
+          if (!relative || observer.include(relative)) observer.revision++;
       });
-      current = { identity, token: NodeCrypto.randomUUID(), revision: 0, watcher };
+      current = {
+        identity,
+        token: NodeCrypto.randomUUID(),
+        revision: 0,
+        watcher,
+        legacy: false,
+        shared: new Map(),
+      };
       watchers.set(root, current);
-      watcher.on("error", () => closeWatcher(root));
+      watcher.on("error", () => closeWatcher(root, true));
       watcher.unref();
     }
+    if (legacy) current.legacy = true;
     return `${current.token}:${current.revision}`;
   };
+  const pruneObservers = () => {
+    const now = clock.currentTimeMillisUnsafe();
+    for (const [root, current] of watchers) {
+      for (const [id, observer] of current.shared)
+        if (observer.until <= now) current.shared.delete(id);
+      if (!current.legacy && current.shared.size === 0) closeWatcher(root, true);
+    }
+  };
+  yield* Effect.sync(pruneObservers).pipe(
+    Effect.repeat(Schedule.spaced("30 seconds")),
+    Effect.forkScoped,
+  );
 
   const io = <A>(operation: () => Promise<A>) =>
     Effect.tryPromise({
@@ -136,9 +202,15 @@ const make = Effect.gen(function* () {
     const relative = path.relative(root, candidate);
     return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
   };
-  const validate = (entries: ReadonlyArray<ProjectFolderEntry>) => {
+  const validate = (
+    entries: ReadonlyArray<ProjectFolderEntry>,
+    contentPolicy?: ProjectFolderContentPolicy,
+  ) => {
+    const include = contentPolicy ? compileProjectContentPolicy(contentPolicy) : null;
+    if (contentPolicy && !include) fail("invalid_path");
     const seen = new Map<string, ProjectFolderEntry>();
     for (const entry of entries) {
+      if (include && !include(entry.path)) fail("invalid_path");
       // Use portable names, including when the sender and recipient use different operating systems.
       if (
         entry.path
@@ -163,7 +235,14 @@ const make = Effect.gen(function* () {
           target.includes(":") ||
           target.includes("\0") ||
           path.isAbsolute(target) ||
-          !inside("/root", path.resolve("/root", path.dirname(entry.path), target))
+          !inside("/root", path.resolve("/root", path.dirname(entry.path), target)) ||
+          (include &&
+            !include(
+              path
+                .relative("/root", path.resolve("/root", path.dirname(entry.path), target))
+                .split(path.sep)
+                .join("/"),
+            ))
         )
           fail("unsupported_entry");
       }
@@ -208,7 +287,9 @@ const make = Effect.gen(function* () {
     return transfer;
   };
 
-  const scan = async (root: string) => {
+  const scan = async (root: string, contentPolicy?: ProjectFolderContentPolicy) => {
+    const include = contentPolicy ? compileProjectContentPolicy(contentPolicy) : null;
+    if (contentPolicy && !include) fail("invalid_path");
     root = await NodeFSP.realpath(root);
     const entries: ProjectFolderEntry[] = [];
     const modified = new Map<string, number>();
@@ -221,6 +302,7 @@ const make = Effect.gen(function* () {
     const walk = async (directory: string) => {
       for (const name of await NodeFSP.readdir(path.join(root, directory))) {
         const relative = directory ? `${directory}/${name}` : name;
+        if (include && !include(relative)) continue;
         const absolute = path.join(root, relative);
         const stat = await NodeFSP.lstat(absolute);
         const kind = stat.isDirectory()
@@ -254,6 +336,17 @@ const make = Effect.gen(function* () {
             cached.set(relative, { signature, hash });
         }
         const linkTarget = kind === "symlink" ? await NodeFSP.readlink(absolute) : undefined;
+        if (
+          kind === "symlink" &&
+          include &&
+          !include(
+            path
+              .relative(root, path.resolve(path.dirname(absolute), linkTarget!))
+              .split(path.sep)
+              .join("/"),
+          )
+        )
+          fail("unsupported_entry");
         if (kind === "symlink" && !inside(root, await NodeFSP.realpath(absolute)))
           fail("unsupported_entry");
         entries.push({
@@ -271,7 +364,7 @@ const make = Effect.gen(function* () {
     };
     await walk("");
     for (const key of cached.keys()) if (!seenFiles.has(key)) cached.delete(key);
-    validate(entries);
+    validate(entries, contentPolicy);
     return { entries, modified, statsByPath };
   };
   const same = (
@@ -468,7 +561,7 @@ const make = Effect.gen(function* () {
 
   const exportFolder: ProjectFolderTransfer["Service"]["exportFolder"] = Effect.fn(
     "ProjectFolderTransfer.exportFolder",
-  )(function* ({ cwd }) {
+  )(function* ({ cwd, contentPolicy }) {
     yield* knownWorkspaces
       .assertContains(cwd)
       .pipe(
@@ -479,7 +572,7 @@ const make = Effect.gen(function* () {
     return yield* io(async () => {
       await prune();
       const root = await NodeFSP.realpath(expandHomePath(cwd, home));
-      const { entries, modified } = await scan(root);
+      const { entries, modified } = await scan(root, contentPolicy);
       const transferId = NodeCrypto.randomUUID();
       sessions.set(transferId, {
         kind: "export",
@@ -491,10 +584,52 @@ const make = Effect.gen(function* () {
         pendingOffsets: new Map(),
         modified,
         touchedAt: clock.currentTimeMillisUnsafe(),
+        ...(contentPolicy ? { contentPolicy } : {}),
       });
       return { transferId, entries };
     });
   });
+
+  const observeContent: ProjectFolderTransfer["Service"]["observeContent"] = Effect.fn(
+    "ProjectFolderTransfer.observeContent",
+  )(function* (input) {
+    yield* knownWorkspaces
+      .assertContains(input.cwd)
+      .pipe(
+        Effect.mapError(
+          (cause) => new ProjectFolderTransferError({ reason: "invalid_path", cause }),
+        ),
+      );
+    return yield* io(async () => {
+      if (!input.observerId || input.observerId.length > 512) fail("invalid_session");
+      const include = compileProjectContentPolicy(input.contentPolicy) ?? fail("invalid_path");
+      pruneObservers();
+      const root = await NodeFSP.realpath(expandHomePath(input.cwd, home));
+      const stat = await NodeFSP.stat(root);
+      if (!stat.isDirectory()) fail("invalid_path");
+      if (!watchers.has(root) && watchers.size >= 128) fail("observation_limit");
+      watchRevision(root, `${stat.dev}:${stat.ino}`, false);
+      const current = watchers.get(root)!;
+      const policy = JSON.stringify(input.contentPolicy);
+      let observer = current.shared.get(input.observerId);
+      if (!observer || observer.policy !== policy) {
+        observer = { policy, token: NodeCrypto.randomUUID(), revision: 0, until: 0, include };
+        current.shared.set(input.observerId, observer);
+      }
+      observer.until = clock.currentTimeMillisUnsafe() + 5 * 60_000;
+      return `${current.token}:${observer.token}:${observer.revision}`;
+    });
+  });
+  const releaseContentObservation: ProjectFolderTransfer["Service"]["releaseContentObservation"] =
+    Effect.fn("ProjectFolderTransfer.releaseContentObservation")((input) =>
+      io(async () => {
+        const absolute = path.resolve(expandHomePath(input.cwd, home));
+        const root = await NodeFSP.realpath(absolute).catch(() => absolute);
+        const current = watchers.get(root);
+        current?.shared.delete(input.observerId);
+        if (current && !current.legacy && current.shared.size === 0) closeWatcher(root, true);
+      }),
+    );
 
   const importFolder: ProjectFolderTransfer["Service"]["importFolder"] = Effect.fn(
     "ProjectFolderTransfer.importFolder",
@@ -510,7 +645,11 @@ const make = Effect.gen(function* () {
     return yield* io(async () => {
       await prune();
       if (input.incremental && input.previousEntries === undefined) fail("invalid_path");
-      validate(input.entries);
+      // Whole-folder replacement would discard destination files excluded from replication.
+      if (input.contentPolicy && input.previousEntries !== undefined && !input.incremental)
+        fail("invalid_path");
+      validate(input.entries, input.contentPolicy);
+      if (input.previousEntries) validate(input.previousEntries, input.contentPolicy);
       const destination = path.resolve(expandHomePath(input.destinationPath, home));
       if (input.previousEntries === undefined) {
         if (
@@ -522,7 +661,8 @@ const make = Effect.gen(function* () {
         )
           fail("destination_exists");
       } else {
-        if (!same((await scan(destination)).entries, input.previousEntries)) fail("source_changed");
+        if (!same((await scan(destination, input.contentPolicy)).entries, input.previousEntries))
+          fail("source_changed");
       }
       await NodeFSP.mkdir(path.dirname(destination), { recursive: true });
       const root = await NodeFSP.mkdtemp(path.join(path.dirname(destination), ".t3-folder-"));
@@ -532,6 +672,7 @@ const make = Effect.gen(function* () {
         incremental: input.incremental === true,
         root,
         destination,
+        ...(input.contentPolicy ? { contentPolicy: input.contentPolicy } : {}),
         entries: input.entries,
         entriesByPath: new Map(input.entries.map((entry) => [entry.path, entry])),
         ...(input.previousEntries === undefined ? {} : { previousEntries: input.previousEntries }),
@@ -673,72 +814,87 @@ const make = Effect.gen(function* () {
         const transfer = yield* io(async () => session(transferId, "import"));
         return yield* locks.withLock(
           `destination:${transfer.destination}`,
-          io(async () => {
-            const previous = new Map(transfer.previousEntries?.map((entry) => [entry.path, entry]));
-            const retained = (entry: ProjectFolderEntry) =>
-              transfer.incremental && fileBytesUnchanged(entry, previous.get(entry.path));
-            const hasLinks = transfer.entries.some((entry) => entry.kind === "symlink");
-            for (const entry of transfer.entries) {
-              if (
-                entry.kind === "file" &&
-                (transfer.offsets.get(entry.path) ?? 0) !== entry.byteLength
-              )
-                fail("incomplete");
-            }
-            for (const entry of transfer.entries) {
-              const absolute = path.join(transfer.root, entry.path);
-              if (entry.kind === "symlink") await NodeFSP.symlink(entry.linkTarget!, absolute);
-              else if (entry.kind === "file" && (!retained(entry) || hasLinks))
-                await NodeFSP.chmod(absolute, entry.mode & 0o777);
-            }
-            const staged = await scan(transfer.root);
-            const stagedEntriesByPath = new Map(staged.entries.map((entry) => [entry.path, entry]));
-            const expectedFiles = transfer.entries.filter(
-              (entry) => entry.kind === "file" && !retained(entry),
-            );
-            for (const entry of expectedFiles) {
-              if (entry.hash && stagedEntriesByPath.get(entry.path)?.hash !== entry.hash)
-                fail("invalid_chunk");
-            }
-            for (const entry of transfer.entries
-              .filter((entry) => entry.kind === "directory")
-              .toSorted((a, b) => b.path.length - a.path.length))
-              await NodeFSP.chmod(path.join(transfer.root, entry.path), entry.mode & 0o777);
-            const destination = transfer.destination!;
-            if (transfer.previousEntries !== undefined) {
-              const current = await scan(destination);
-              if (!same(current.entries, transfer.previousEntries)) fail("source_changed");
-              if (transfer.incremental) {
-                await applyIncrementalSync(transfer, current);
-                await remove(transferId, transfer);
+          mutationGuard
+            .withIdle(
+              [transfer.destination!],
+              io(async () => {
+                const previous = new Map(
+                  transfer.previousEntries?.map((entry) => [entry.path, entry]),
+                );
+                const retained = (entry: ProjectFolderEntry) =>
+                  transfer.incremental && fileBytesUnchanged(entry, previous.get(entry.path));
+                const hasLinks = transfer.entries.some((entry) => entry.kind === "symlink");
+                for (const entry of transfer.entries) {
+                  if (
+                    entry.kind === "file" &&
+                    (transfer.offsets.get(entry.path) ?? 0) !== entry.byteLength
+                  )
+                    fail("incomplete");
+                }
+                for (const entry of transfer.entries) {
+                  const absolute = path.join(transfer.root, entry.path);
+                  if (entry.kind === "symlink") await NodeFSP.symlink(entry.linkTarget!, absolute);
+                  else if (entry.kind === "file" && (!retained(entry) || hasLinks))
+                    await NodeFSP.chmod(absolute, entry.mode & 0o777);
+                }
+                const staged = await scan(transfer.root, transfer.contentPolicy);
+                const stagedEntriesByPath = new Map(
+                  staged.entries.map((entry) => [entry.path, entry]),
+                );
+                const expectedFiles = transfer.entries.filter(
+                  (entry) => entry.kind === "file" && !retained(entry),
+                );
+                for (const entry of expectedFiles) {
+                  if (entry.hash && stagedEntriesByPath.get(entry.path)?.hash !== entry.hash)
+                    fail("invalid_chunk");
+                }
+                for (const entry of transfer.entries
+                  .filter((entry) => entry.kind === "directory")
+                  .toSorted((a, b) => b.path.length - a.path.length))
+                  await NodeFSP.chmod(path.join(transfer.root, entry.path), entry.mode & 0o777);
+                const destination = transfer.destination!;
+                if (transfer.previousEntries !== undefined) {
+                  const current = await scan(destination, transfer.contentPolicy);
+                  if (!same(current.entries, transfer.previousEntries)) fail("source_changed");
+                  if (transfer.incremental) {
+                    await applyIncrementalSync(transfer, current);
+                    await remove(transferId, transfer);
+                    return { cwd: destination };
+                  }
+                  const backup = `${transfer.root}-previous`;
+                  await NodeFSP.rename(destination, backup);
+                  try {
+                    await NodeFSP.rename(transfer.root, destination);
+                  } catch (cause) {
+                    await NodeFSP.rename(backup, destination);
+                    throw cause;
+                  }
+                  sessions.delete(transferId);
+                  await NodeFSP.rm(backup, { recursive: true, force: true });
+                  return { cwd: destination };
+                }
+                // Reserve the destination exclusively; rename must never replace somebody else's folder.
+                await NodeFSP.mkdir(destination).catch((cause: NodeJS.ErrnoException) => {
+                  if (cause.code === "EEXIST") fail("destination_exists");
+                  throw cause;
+                });
+                try {
+                  await NodeFSP.rename(transfer.root, destination);
+                } catch (cause) {
+                  await NodeFSP.rmdir(destination);
+                  throw cause;
+                }
+                sessions.delete(transferId);
                 return { cwd: destination };
-              }
-              const backup = `${transfer.root}-previous`;
-              await NodeFSP.rename(destination, backup);
-              try {
-                await NodeFSP.rename(transfer.root, destination);
-              } catch (cause) {
-                await NodeFSP.rename(backup, destination);
-                throw cause;
-              }
-              sessions.delete(transferId);
-              await NodeFSP.rm(backup, { recursive: true, force: true });
-              return { cwd: destination };
-            }
-            // Reserve the destination exclusively; rename must never replace somebody else's folder.
-            await NodeFSP.mkdir(destination).catch((cause: NodeJS.ErrnoException) => {
-              if (cause.code === "EEXIST") fail("destination_exists");
-              throw cause;
-            });
-            try {
-              await NodeFSP.rename(transfer.root, destination);
-            } catch (cause) {
-              await NodeFSP.rmdir(destination);
-              throw cause;
-            }
-            sessions.delete(transferId);
-            return { cwd: destination };
-          }),
+              }),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                cause._tag === "WorkspaceBusyError"
+                  ? new ProjectFolderTransferError({ reason: "busy", cause })
+                  : cause,
+              ),
+            ),
         );
       }),
     ),
@@ -754,7 +910,10 @@ const make = Effect.gen(function* () {
         if (!transfer) return;
         if (transfer.kind !== "export") fail("invalid_session");
         try {
-          if (input.validate && !same((await scan(transfer.root)).entries, transfer.entries))
+          if (
+            input.validate &&
+            !same((await scan(transfer.root, transfer.contentPolicy)).entries, transfer.entries)
+          )
             fail("source_changed");
         } finally {
           sessions.delete(input.transferId);
@@ -776,11 +935,22 @@ const make = Effect.gen(function* () {
   );
 
   return ProjectFolderTransfer.of({
+    validateEntries: Effect.fn("ProjectFolderTransfer.validateEntries")((input) =>
+      Effect.try({
+        try: () => validate(input.entries, input.contentPolicy),
+        catch: (cause) =>
+          isTransferError(cause)
+            ? cause
+            : new ProjectFolderTransferError({ reason: "invalid_path", cause }),
+      }),
+    ),
     exportEnd,
     status,
     getSync,
     setSync,
     exportFolder,
+    observeContent,
+    releaseContentObservation,
     importFolder,
     read,
     write,

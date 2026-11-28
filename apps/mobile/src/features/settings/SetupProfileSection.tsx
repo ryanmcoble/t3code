@@ -1,3 +1,4 @@
+import { setupProfilePresentation } from "@t3tools/client-runtime/setup-profile-presentation";
 import { useAtomValue } from "@effect/atom-react";
 import { linkableMachines } from "@t3tools/client-runtime/link-request";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
@@ -13,6 +14,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 
 export function SetupProfileSection({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
@@ -39,6 +41,8 @@ export function SetupProfileSection({ environmentId }: { readonly environmentId:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const binding = state.data?.binding;
+  const presentation = setupProfilePresentation(binding ?? null);
+  const [showItems, setShowItems] = useState(false);
   const run = async (input: Parameters<typeof command>[0]["input"]) => {
     setBusy(true);
     setError(null);
@@ -70,32 +74,46 @@ export function SetupProfileSection({ environmentId }: { readonly environmentId:
             Applied revision {binding.appliedRevision} · {binding.enabled ? "Sync on" : "Sync off"}
           </Text>
         ) : null}
-        {state.error || error || binding?.error ? (
-          <Text className="text-sm text-danger-foreground">
-            {error ?? state.error ?? binding?.error}
-          </Text>
+        <Text className="text-sm text-foreground">{presentation.title}</Text>
+        <Text className="text-sm text-foreground-muted">{presentation.description}</Text>
+        {state.error || error ? (
+          <Text className="text-sm text-danger-foreground">{error ?? state.error}</Text>
         ) : null}
-        {binding?.items.map((item) => (
-          <Text
-            key={`${item.instanceId}:${item.kind}:${item.name}`}
-            className="text-sm text-foreground-muted"
-          >
-            {item.name} · {item.status}
-          </Text>
-        ))}
+        {showItems
+          ? binding?.items.map((item) => (
+              <Text
+                key={`${item.instanceId}:${item.kind}:${item.name}`}
+                className="text-sm text-foreground-muted"
+              >
+                {item.name} ·{" "}
+                {config.providers.find((provider) => provider.instanceId === item.instanceId)
+                  ?.displayName ?? item.instanceId}{" "}
+                · {item.status.replaceAll("-", " ")}
+                {"\n"}
+                {item.message}
+              </Text>
+            ))
+          : null}
       </View>
       {binding ? (
         <>
+          <ListActionRow
+            label={showItems ? "Hide setup items" : "Review MCP connections, skills and hooks"}
+            description={`${presentation.configured} configured · ${presentation.verified} verified · ${presentation.needsAttention} need attention`}
+            onPress={() => setShowItems(!showItems)}
+          />
           <ListActionRow
             label={binding.enabled ? "Pause setup sync" : "Resume setup sync"}
             disabled={!allowed || busy}
             onPress={() => void run({ operation: "pause", paused: binding.enabled })}
           />
-          <ListActionRow
-            label="Retry setup"
-            disabled={!allowed || busy}
-            onPress={() => void run({ operation: "reconcile" })}
-          />
+          {presentation.canRetry ? (
+            <ListActionRow
+              label="Retry setup"
+              disabled={!allowed || busy}
+              onPress={() => void run({ operation: "reconcile" })}
+            />
+          ) : null}
           <ListActionRow
             label="Detach and keep setup"
             disabled={!allowed || busy}
@@ -104,20 +122,42 @@ export function SetupProfileSection({ environmentId }: { readonly environmentId:
         </>
       ) : null}
       {state.data?.profiles.map((p) => (
-        <ListActionRow
-          key={p.id}
-          label={`Apply ${p.name}`}
-          description="Apply to enabled harnesses and keep synchronized"
-          disabled={!allowed || busy}
-          onPress={() =>
-            void run({
-              operation: "apply",
-              profileId: p.id,
-              subscribe: true,
-              instanceIds: config.providers.filter((p) => p.enabled).map((p) => p.instanceId),
-            })
-          }
-        />
+        <View key={p.id}>
+          {config.environment.capabilities.setupHooks === 1 ? (
+            <SettingsSwitchRow
+              label={`${p.name}: work tracking`}
+              subtitle="Publish SingleComm hooks and work skill to selected harnesses on subscribed machines. Each machine needs the CLI."
+              value={
+                p.hooks?.some((hook) => hook.integration === "singlecomm-work" && hook.enabled) ??
+                false
+              }
+              disabled={!allowed || busy}
+              onValueChange={(enabled) =>
+                void run({
+                  operation: "publish",
+                  profile: {
+                    ...p,
+                    expectedRevision: p.revision,
+                    hooks: [{ integration: "singlecomm-work", enabled, drivers: [] }],
+                  },
+                })
+              }
+            />
+          ) : null}
+          <ListActionRow
+            label={`Apply ${p.name}`}
+            description="Apply to enabled harnesses and keep synchronized"
+            disabled={!allowed || busy}
+            onPress={() =>
+              void run({
+                operation: "apply",
+                profileId: p.id,
+                subscribe: true,
+                instanceIds: config.providers.filter((p) => p.enabled).map((p) => p.instanceId),
+              })
+            }
+          />
+        </View>
       ))}
       {owners.map((e) => (
         <ListActionRow

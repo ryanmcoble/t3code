@@ -27,7 +27,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import { withWorkspaceLeases } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
@@ -1549,12 +1549,16 @@ export const layer: Layer.Layer<
     return ProviderTurnStartServiceV2.of({
       start: Effect.fn("ProviderTurnStartService.start")(
         function* (input) {
-          // Storage cleanup removes worktrees under the same lease. Only startup
-          // holds it; the provider turn runs after it is released.
+          // Cleanup and content updates share these leases; provider execution begins after release.
           const { thread } = yield* projectionStore.getThreadRecords(input.threadId, []);
-          const providerTurn = yield* thread.worktreePath === null
-            ? start(input)
-            : withWorkspaceLease(path.resolve(thread.worktreePath), start(input));
+          const project = yield* projects.getById(thread.projectId);
+          const roots: string[] = [];
+          if (Option.isSome(project)) roots.push(path.resolve(project.value.workspaceRoot));
+          if (thread.worktreePath !== null) roots.push(path.resolve(thread.worktreePath));
+          const canonical = yield* Effect.forEach(roots, (root) =>
+            fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
+          );
+          const providerTurn = yield* withWorkspaceLeases([...roots, ...canonical], start(input));
           if (providerTurn !== undefined) yield* providerTurn;
         },
         (effect, input) =>

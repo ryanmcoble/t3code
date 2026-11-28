@@ -1,14 +1,32 @@
+export {
+  groupContainers,
+  containerRuleAvailability,
+  resolveContainerFolders,
+  containerCountLabel,
+  containerPanelSummary,
+  containerMetricsLabel,
+  managedContainerStatus,
+  type ContainerFilter,
+} from "../containerPresentation.ts";
 export { memoryRulesFromDraft, memoryRulesDraftError } from "../memoryRules.ts";
+export {
+  sharedProjectMappingStatus,
+  sharedProjectMemberLabel,
+  sharedProjectFileStatus,
+} from "../sharedProjectPresentation.ts";
 import {
   WS_METHODS,
+  SharedProjectError,
   SharedMemoryError,
   type EnvironmentId,
+  type ThreadId,
   type MemoryRemoteBinding,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Atom } from "effect/reactivity";
+import { Atom, type AtomRegistry } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
+  createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createRuntimeCommand,
@@ -78,6 +96,121 @@ export function createSharedCapabilityAtoms<R, E>(
       if (enrolled._tag === "Failure") return yield* Effect.failCause(enrolled.cause);
     }),
   });
+  const managedContainers = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "containers:managed",
+    tag: WS_METHODS.containersManagedList,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+  });
+  const sharedProjectState = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "sharedProjects:state",
+    tag: WS_METHODS.sharedProjectsState,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+    refreshIntervalMs: 15_000,
+  });
+  const sharedProjectEnrollmentState = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "sharedProjects:enrollmentState",
+    tag: WS_METHODS.sharedProjectEnrollmentState,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+    refreshIntervalMs: 15_000,
+  });
+  const sharedProjectContentState = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "sharedProjects:contentState",
+    tag: WS_METHODS.sharedProjectContentState,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+    refreshIntervalMs: 15_000,
+  });
+  const sharedProjectContentConflict = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "sharedProjects:contentConflict",
+    tag: WS_METHODS.sharedProjectContentConflict,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+  });
+  const sharedProjectContentCommand = createEnvironmentRpcCommand(runtime, {
+    label: "sharedProjects:contentCommand",
+    tag: WS_METHODS.sharedProjectContentCommand,
+    onSuccess: ({ environmentId, input }, registry) =>
+      Effect.sync(() => {
+        registry.refresh(
+          sharedProjectContentState({
+            environmentId,
+            input: { sharedProjectId: input.sharedProjectId },
+          }),
+        );
+        registry.refresh(
+          sharedProjectContentConflict({
+            environmentId,
+            input: { sharedProjectId: input.sharedProjectId, rootId: input.rootId, cursor: 0 },
+          }),
+        );
+      }),
+  });
+  const sharedProjectGrant = createEnvironmentRpcCommand(runtime, {
+    label: "sharedProjects:grant",
+    tag: WS_METHODS.sharedProjectGrant,
+  });
+  const sharedProjectEnrollmentCommand = createEnvironmentRpcCommand(runtime, {
+    label: "sharedProjects:enrollmentCommand",
+    tag: WS_METHODS.sharedProjectEnrollmentCommand,
+    onSuccess: ({ environmentId }, registry) =>
+      Effect.sync(() => {
+        registry.refresh(sharedProjectEnrollmentState({ environmentId, input: {} }));
+        registry.refresh(sharedProjectState({ environmentId, input: {} }));
+      }),
+  });
+  const enrollSharedProject = createRuntimeCommand(runtime, {
+    label: "sharedProjects:enroll",
+    execute: Effect.fn("SharedProjects.enroll")(function* (
+      input: {
+        readonly ownerId: EnvironmentId;
+        readonly destinationId: EnvironmentId;
+        readonly sharedProjectId: string;
+        readonly sourceUrl: string;
+        readonly receiveFiles?: boolean;
+      },
+      registry,
+    ) {
+      const grant = yield* Effect.promise(() =>
+        sharedProjectGrant.run(registry, {
+          environmentId: input.ownerId,
+          input: {
+            sharedProjectId: input.sharedProjectId,
+            destinationEnvironmentId: input.destinationId,
+            revoke: false,
+            access: input.receiveFiles ? "files" : "metadata",
+          },
+        }),
+      );
+      if (grant._tag === "Failure") return yield* Effect.failCause(grant.cause);
+      if (!grant.value.token) return yield* new SharedProjectError({ reason: "denied" });
+      const result = yield* Effect.promise(() =>
+        sharedProjectEnrollmentCommand.run(registry, {
+          environmentId: input.destinationId,
+          input: {
+            operation: "connect",
+            sharedProjectId: input.sharedProjectId,
+            ownerEnvironmentId: input.ownerId,
+            sourceUrl: input.sourceUrl,
+            token: grant.value.token!,
+            receiveFiles: input.receiveFiles ?? false,
+          },
+        }),
+      );
+      if (result._tag === "Failure") return yield* Effect.failCause(result.cause);
+    }),
+  });
+  const refreshManaged = (
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    registry: AtomRegistry.AtomRegistry,
+  ) =>
+    Effect.sync(() => {
+      registry.refresh(managedContainers({ environmentId, input: {} }));
+      registry.refresh(managedContainers({ environmentId, input: { threadId } }));
+    });
   return {
     memoryState,
     memoryStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -89,6 +222,65 @@ export function createSharedCapabilityAtoms<R, E>(
     memoryCommand,
     memoryGrant,
     enroll,
+    managedContainers,
+    sharedProjectState,
+    sharedProjectEnrollmentState,
+    sharedProjectGrant,
+    sharedProjectEnrollmentCommand,
+    enrollSharedProject,
+    sharedProjectContentState,
+    sharedProjectContentConflict,
+    sharedProjectContentCommand,
+    sharedProjectPublish: createEnvironmentRpcCommand(runtime, {
+      label: "sharedProjects:publish",
+      tag: WS_METHODS.sharedProjectsPublish,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.refresh(sharedProjectState({ environmentId, input: {} }))),
+    }),
+    sharedProjectBind: createEnvironmentRpcCommand(runtime, {
+      label: "sharedProjects:bind",
+      tag: WS_METHODS.sharedProjectsBind,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.refresh(sharedProjectState({ environmentId, input: {} }))),
+    }),
+    sharedProjectUnbind: createEnvironmentRpcCommand(runtime, {
+      label: "sharedProjects:unbind",
+      tag: WS_METHODS.sharedProjectsUnbind,
+      onSuccess: ({ environmentId }, registry) =>
+        Effect.sync(() => registry.refresh(sharedProjectState({ environmentId, input: {} }))),
+    }),
+    managedContainerCreate: createEnvironmentRpcCommand(runtime, {
+      label: "containers:create",
+      tag: WS_METHODS.containersManagedCreate,
+      onSuccess: ({ environmentId, input }, registry) =>
+        refreshManaged(environmentId, input.threadId, registry),
+    }),
+    managedContainerCommand: createEnvironmentRpcCommand(runtime, {
+      label: "containers:command",
+      tag: WS_METHODS.containersManagedCommand,
+      onSuccess: ({ environmentId, input }, registry) =>
+        refreshManaged(environmentId, input.threadId, registry),
+    }),
+    containers: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "containers:subscribe",
+      tag: WS_METHODS.containersSubscribe,
+      idleTtlMs: 0,
+    }),
+    containerSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "containers:snapshot",
+      tag: WS_METHODS.containersSnapshot,
+      staleTimeMs: 0,
+    }),
+    containerLogs: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "containers:logs",
+      idleTtlMs: 0,
+      tag: WS_METHODS.containersLogs,
+      staleTimeMs: 0,
+    }),
+    containerAssociate: createEnvironmentRpcCommand(runtime, {
+      label: "containers:associate",
+      tag: WS_METHODS.containersAssociate,
+    }),
     computerState,
     memoryExport: createEnvironmentRpcCommand(runtime, {
       label: "memory:export",

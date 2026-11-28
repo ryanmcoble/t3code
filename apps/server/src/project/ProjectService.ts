@@ -13,6 +13,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -34,6 +35,7 @@ import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { withWorkspaceLeases } from "../workspace/workspaceLease.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
   readonly commandId: CommandId;
@@ -156,6 +158,7 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+  const fs = yield* FileSystem.FileSystem;
   const threadProjections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -265,14 +268,39 @@ export const make = Effect.gen(function* () {
         error: encodeProjectCommandRejection(planned.failure),
       });
     });
-    const receipt = yield* projectLocks
-      .withLock(
-        projectId,
-        workspaceRoot === undefined
-          ? planAndCommit
-          : workspaceLocks.withLock(workspaceRoot, planAndCommit),
-      )
-      .pipe(Effect.mapError(dispatchError));
+    const receipt = yield* Effect.gen(function* () {
+      for (;;) {
+        const changesRoot = workspaceRoot !== undefined || command.type === "project.delete";
+        const previous = changesRoot
+          ? yield* readRow(projectId, { includeDeleted: true })
+          : Option.none();
+        const previousRoot = Option.getOrUndefined(previous)?.workspaceRoot;
+        const roots = [previousRoot, workspaceRoot].filter((root) => root !== undefined);
+        const canonical = yield* Effect.forEach(roots, (root) =>
+          fs.realPath(root).pipe(Effect.orElseSucceed(() => root)),
+        );
+        const commitStable = Effect.gen(function* () {
+          if (changesRoot) {
+            const current = Option.getOrUndefined(
+              yield* readRow(projectId, { includeDeleted: true }),
+            );
+            if (current?.workspaceRoot !== previousRoot) return Option.none();
+          }
+          return Option.some(yield* planAndCommit);
+        });
+        // Root leases precede project locks and SQL; retry if another move won while acquiring them.
+        const committed = yield* withWorkspaceLeases(
+          [...roots, ...canonical],
+          projectLocks.withLock(
+            projectId,
+            workspaceRoot === undefined
+              ? commitStable
+              : workspaceLocks.withLock(workspaceRoot, commitStable),
+          ),
+        );
+        if (Option.isSome(committed)) return committed.value;
+      }
+    }).pipe(Effect.mapError(dispatchError));
     if (receipt.projectId !== projectId || receipt.commandType !== command.type) {
       return yield* dispatchError(
         `Command ${command.commandId} was already used by ${receipt.commandType} for ${receipt.projectId}.`,

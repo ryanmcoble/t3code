@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
   AuthAccessWriteScope,
+  AuthEnvironmentMaintainScope,
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   AuthOrchestrationOperateScope,
@@ -17,6 +18,15 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.containersAssociate]: AuthSettingsWriteScope,
+  [WS_METHODS.containersManagedCreate]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.containersManagedCommand]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.sharedProjectsPublish]: AuthSettingsWriteScope,
+  [WS_METHODS.sharedProjectEnrollmentCommand]: AuthSettingsWriteScope,
+  [WS_METHODS.sharedProjectGrant]: AuthAccessWriteScope,
+  [WS_METHODS.sharedProjectContentCommand]: AuthFilesystemWriteScope,
+  [WS_METHODS.sharedProjectsBind]: AuthSettingsWriteScope,
+  [WS_METHODS.sharedProjectsUnbind]: AuthSettingsWriteScope,
   [WS_METHODS.appsSave]: AuthSettingsWriteScope,
   [WS_METHODS.appsRemove]: AuthSettingsWriteScope,
   [WS_METHODS.appsWrite]: AuthFilesystemWriteScope,
@@ -94,11 +104,30 @@ export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
+const decodeFileReceiving = Schema.decodeUnknownSync(
+  Schema.Struct({
+    operation: Schema.String,
+    receiveFiles: Schema.optionalKey(Schema.Boolean),
+    enabled: Schema.optionalKey(Schema.Boolean),
+  }),
+);
 
 export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (method === WS_METHODS.sharedProjectContentCommand)
+    return [AuthSettingsWriteScope, AuthFilesystemWriteScope];
+  if (method === WS_METHODS.sharedProjectContentConflict)
+    return [AuthSettingsWriteScope, AuthFilesystemReadScope];
+  if (method === WS_METHODS.sharedProjectEnrollmentCommand && input !== undefined) {
+    const payload = decodeFileReceiving(input);
+    if (
+      (payload.operation === "connect" && payload.receiveFiles) ||
+      (payload.operation === "receive-files" && payload.enabled)
+    )
+      return [AuthSettingsWriteScope, AuthFilesystemWriteScope];
+  }
   if (method === WS_METHODS.setupProfilesGrant || method === WS_METHODS.memoryGrant)
     return [AuthAccessWriteScope, AuthSettingsWriteScope];
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {

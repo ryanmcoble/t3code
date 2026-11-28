@@ -71,8 +71,11 @@ export * from "./secretRequest.ts";
 export * from "./secretReference.ts";
 export * from "./clientRpcPermissions.ts";
 export * from "./projectFolder.ts";
+export * from "./sharedProject.ts";
+export * from "./sharedProjectContent.ts";
 export * from "./setupProfile.ts";
 export * from "./sharedMemory.ts";
 export * from "./computerUse.ts";
 
+export * from "./containers.ts";
 export * from "./standaloneApps.ts";

@@ -1,3 +1,4 @@
+import { ThreadContainersPanel } from "./ThreadContainersPanel";
 import type {
   EditorId,
   EnvironmentId,
@@ -236,6 +237,15 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
               {density === "full" && !props.draftId && visible.servers ? (
                 <ThreadServersPanel environmentId={props.environmentId} threadId={props.threadId} />
+              ) : null}
+
+              {density === "full" && visible.containers ? (
+                <ThreadContainersPanel
+                  threadId={props.threadId}
+                  environmentId={props.environmentId}
+                  projectId={props.projectId}
+                  folder={props.gitCwd}
+                />
               ) : null}
 
               {density === "full" && !props.draftId && visible.automations ? (

@@ -20,11 +20,12 @@ export function useVoiceInput(input: {
   readonly disabled: boolean;
   readonly readDraft: () => VoiceDraftSnapshot | null;
   readonly subscribeDraftChanges: (onChange: () => void) => () => void;
+  readonly focusDraft: () => void;
   readonly commitDraft: (
     text: string,
     selection: { readonly start: number; readonly end: number },
   ) => void;
-  readonly submitDraft: () => void;
+  readonly submitDraft: (() => void) | null;
 }) {
   const settings = useClientSettings((value) => value.voiceInput);
   const background = use(BackgroundThreadContext);
@@ -44,7 +45,7 @@ export function useVoiceInput(input: {
   const submitTranscript = useStableCallback((ownerKey: string, text: string) => {
     if (background || input.disabled || input.ownerKey !== ownerKey) return;
     const current = readDraft();
-    if (current?.ownerKey === ownerKey && current.text === text) input.submitDraft();
+    if (current?.ownerKey === ownerKey && current.text === text) input.submitDraft?.();
   });
   const [session] = useState(() =>
     createBrowserVoiceInput({ getTranscriber, getDuckOtherAudio, readDraft, commitDraft }),
@@ -62,7 +63,7 @@ export function useVoiceInput(input: {
     heldRecording.current = false;
     const ownerKey = input.ownerKey;
     const text = await session.controller.stop();
-    if (text === null || !send) return;
+    if (text === null || !send || !input.submitDraft) return;
     // Submission must see the committed transcript and the idle controller in the same render.
     flushSync(() => {});
     if (session.getSnapshot().phase === "idle") submitTranscript(ownerKey, text);
@@ -92,7 +93,10 @@ export function useVoiceInput(input: {
       void session.controller.stop();
       return;
     }
-    if (!busy && available && !input.disabled) void session.controller.start();
+    if (!busy && available && !input.disabled) {
+      if (!document.activeElement?.closest('[data-testid="composer-editor"]')) input.focusDraft();
+      void session.controller.start();
+    }
   });
   const cancel = useStableCallback(() => {
     heldRecording.current = false;
@@ -118,7 +122,7 @@ export function useVoiceInput(input: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases microphone and transcription work when its draft leaves the mounted composer
   useEffect(() => {
     const ownerKey = input.ownerKey;
-    if (background) {
+    if (background || input.disabled) {
       session.releaseOwner(ownerKey);
       return;
     }
@@ -128,7 +132,7 @@ export function useVoiceInput(input: {
       shortcutPressed.current = false;
       session.releaseOwner(ownerKey);
     };
-  }, [session, input.ownerKey, background]);
+  }, [session, input.ownerKey, input.disabled, background]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes external draft changes so late transcripts cannot overwrite an edited draft
   useEffect(() => {
     if (background) return;

@@ -1,5 +1,6 @@
 import {
   type AuthMcpClientAccess,
+  type AuthEnvironmentScope,
   type EnvironmentId,
   McpCapabilityUnavailableError,
   OrchestratorMcpFailure,
@@ -32,6 +33,7 @@ export interface McpThreadCaller {
 }
 
 export interface McpClientCaller {
+  readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
   readonly sessionId: string;
   readonly label: string;
   readonly access: AuthMcpClientAccess;

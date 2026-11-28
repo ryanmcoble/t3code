@@ -43,12 +43,14 @@ function Card({
   inline,
   fixture,
   rows = 1,
+  expandedContainers = false,
 }: {
   threadRef: ScopedThreadRef;
   inline: boolean;
   fixture: ReturnType<typeof setup>;
   /** Rows of 100px shown at full density. Compact always takes 50px. */
   rows?: number;
+  expandedContainers?: boolean;
 }) {
   return (
     // The web root renders in StrictMode, which re-runs ref callbacks on every mount.
@@ -73,9 +75,16 @@ function Card({
           contentKey={String(rows)}
         >
           {(density) => (
-            <p style={{ height: density === "full" ? rows * 100 : 50 }}>
-              Details for {threadRef.threadId}
-            </p>
+            <>
+              <p style={{ height: density === "full" ? rows * 100 : 50 }}>
+                Details for {threadRef.threadId}
+              </p>
+              {expandedContainers && density === "full" ? (
+                <div data-thread-details-container-list style={{ height: 1200 }}>
+                  Expanded container inventory
+                </div>
+              ) : null}
+            </>
           )}
         </ThreadDetailsCard>
       </ChatCanvasContext>
@@ -157,4 +166,14 @@ it("returns to full density when hidden items make the content fit", async () =>
 
   await screen.rerender(<Card threadRef={threadB} inline fixture={fixture} rows={2} />);
   await expect.element(card).toHaveAttribute("data-density", "full");
+});
+
+it("keeps expanded containers available instead of hiding them through compact density", async () => {
+  using fixture = setup();
+  await using _screen = await render(
+    <Card threadRef={threadB} inline fixture={fixture} expandedContainers />,
+  );
+  const card = page.getByRole("region", { name: "Thread details" });
+  await expect.element(card).toHaveAttribute("data-density", "full");
+  await expect.element(page.getByText("Expanded container inventory")).toBeInTheDocument();
 });

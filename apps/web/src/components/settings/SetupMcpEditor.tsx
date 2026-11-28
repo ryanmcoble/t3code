@@ -1,3 +1,4 @@
+import { Switch } from "../ui/switch";
 import { SetupMcpConnection } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { useState } from "react";
@@ -34,6 +35,17 @@ export function SetupMcpEditor({
           <span>
             {c.name} · {c.transport} · {c.enabled ? "enabled" : "disabled"}
           </span>
+          <Switch
+            aria-label={`Enable MCP connection ${c.name}`}
+            checked={c.enabled}
+            onCheckedChange={(enabled) =>
+              onChange(
+                encode(
+                  entries.map((entry) => (entry.name === c.name ? { ...entry, enabled } : entry)),
+                ),
+              )
+            }
+          />
           <Button
             size="sm"
             variant="ghost"

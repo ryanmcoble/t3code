@@ -73,6 +73,7 @@ const MCP_CLIENT_SUBJECT = "mcp-client";
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
 
 export interface McpClientSession {
+  readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly sessionId: AuthSessionId;
   readonly label: string;
   readonly access: AuthMcpClientAccess;
@@ -1295,6 +1296,7 @@ export const make = Effect.gen(function* () {
                 ? (session.runtimeModeCeiling ?? "approval-required")
                 : "read-only",
               peerLink: session.peerLink === true,
+              scopes: session.scopes,
             } satisfies McpClientSession)
           : Effect.fail(
               new ServerAuthInvalidCredentialError({

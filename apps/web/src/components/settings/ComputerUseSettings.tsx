@@ -1,14 +1,19 @@
 import { useAtomValue } from "@effect/atom-react";
+import { ComputerAppAccessPicker } from "./ComputerAppAccessPicker";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, type ProviderInstanceId } from "@t3tools/contracts";
 import { useState } from "react";
+import { requestConfirmDialog } from "~/confirmDialog";
+import { Badge } from "../ui/badge";
+import { Checkbox } from "../ui/checkbox";
+import { Switch } from "../ui/switch";
 import { serverEnvironment } from "~/state/server";
 import { sharedCapabilities } from "~/state/sharedCapabilities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { SettingsSection } from "./settingsLayout";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
 
 export function ComputerUseSettings({
   environmentId,
@@ -26,120 +31,270 @@ export function ComputerUseSettings({
   const command = useAtomCommand(sharedCapabilities.computerCommand, { reportFailure: false });
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [path, setPath] = useState<string | null>(null);
-  const [apps, setApps] = useState<string | null>(null);
+  const [apps, setApps] = useState<ReadonlyArray<string> | null>(null);
   const [providers, setProviders] = useState<ReadonlyArray<ProviderInstanceId> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const value = state.data?.config;
   const providerIds = providers ?? value?.providerInstanceIds ?? [];
   if (!supported) return null;
   const run = async (input: Parameters<typeof command>[0]["input"]) => {
+    setBusy(true);
     const result = await command({ environmentId, input });
-    if (isAtomCommandInterrupted(result) || result._tag === "Failure")
-      setError("Desktop settings could not be changed.");
-    else {
-      setError(null);
-      state.refresh();
+    setBusy(false);
+    if (isAtomCommandInterrupted(result) || result._tag === "Failure") {
+      setError("Desktop settings could not be changed. Check access and setup, then try again.");
+      return false;
     }
+    setError(null);
+    setEnabled(null);
+    setApps(null);
+    setPath(null);
+    setProviders(null);
+    state.refresh();
+    return true;
   };
+  const checks = state.data?.checks;
+  const isEnabled = enabled ?? value?.enabled ?? false;
+  const selectedApps = apps ?? value?.allowedApps ?? [];
+  const enabledProviders = config?.providers.filter((provider) => provider.enabled) ?? [];
+  const setupChecks = [
+    {
+      name: "Cua Driver",
+      status:
+        checks?.driver === "available"
+          ? "Available"
+          : checks?.driver === "unsupported-version"
+            ? "Update needed"
+            : "Check installation",
+    },
+    {
+      name: "Accessibility",
+      status:
+        checks?.accessibility === true
+          ? "Allowed"
+          : checks?.accessibility === false
+            ? "Needs approval on this Mac"
+            : "Not checked",
+    },
+    {
+      name: "Screen Recording",
+      status:
+        checks?.screenRecording === true
+          ? "Allowed"
+          : checks?.screenRecording === false
+            ? "Needs approval on this Mac"
+            : "Not checked",
+    },
+    { name: "Agent verification", status: "Observe an allowed app to verify capture" },
+  ];
   return (
-    <SettingsSection title={`Computer use · ${label}`}>
+    <SettingsSection id="computer-use" title={`Computer use · ${label}`}>
+      <SettingsRow
+        title="Desktop access"
+        description="Only the selected harnesses and apps may use this desktop. One thread controls it at a time."
+        control={
+          <Badge variant={state.data?.readiness === "ready" ? "info" : "secondary"}>
+            {state.data?.readiness === "ready"
+              ? "Permissions available"
+              : isEnabled
+                ? "Setup needs attention"
+                : "Not enabled"}
+          </Badge>
+        }
+      />
       <div className="space-y-3 px-4 py-3">
-        <p className="text-sm text-muted-foreground">
-          Let selected harnesses use allowed apps through Cua Driver. One thread owns the desktop at
-          a time. OS permissions stay on this machine.
+        {error || state.error ? (
+          <p role="alert" className="text-sm text-destructive-foreground">
+            {error ?? state.error}
+          </p>
+        ) : null}
+        <p role="status" className="text-sm text-muted-foreground">
+          {state.data?.message ?? "Checking this environment…"}
         </p>
-        <p className="text-sm">
-          {state.data?.readiness ?? "Checking"} · {state.data?.message}
-        </p>
-        {error || state.error ? <p role="alert">{error ?? state.error}</p> : null}
-        {state.data?.lease ? (
-          <div className="rounded border p-3">
-            <p>
-              Controlled by {state.data.lease.label} · {state.data.lease.bundleId}
+        <dl className="divide-y divide-border">
+          {setupChecks.map((check) => (
+            <div key={check.name} className="flex flex-wrap justify-between gap-2 py-2 text-sm">
+              <dt>{check.name}</dt>
+              <dd className="text-muted-foreground">{check.status}</dd>
+            </div>
+          ))}
+        </dl>
+        {!value?.enabled && !providerIds.length && !selectedApps.length ? (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              Start with Calculator and your enabled harnesses:{" "}
+              {enabledProviders
+                .map((provider) => provider.displayName ?? provider.driver)
+                .join(", ") || "none enabled"}
+              . Add other apps below when needed.
             </p>
             <Button
-              variant="destructive"
-              disabled={!allowed}
+              disabled={!allowed || busy || !enabledProviders.length}
+              onClick={async () => {
+                if (
+                  await requestConfirmDialog(
+                    `Enable computer use on ${label} for Calculator only?\nAllowed harnesses: ${enabledProviders.map((provider) => provider.displayName ?? provider.driver).join(", ")}. OS permissions remain on this Mac.`,
+                  )
+                ) {
+                  const ids = enabledProviders.map((provider) => provider.instanceId);
+                  const saved = await run({
+                    operation: "configure",
+                    config: {
+                      enabled: true,
+                      command: value?.command ?? "cua-driver",
+                      allowedApps: ["com.apple.calculator"],
+                      providerInstanceIds: ids,
+                    },
+                  });
+                  if (saved) {
+                    setProviders(ids);
+                    setApps(["com.apple.calculator"]);
+                    setEnabled(true);
+                  }
+                }
+              }}
+            >
+              {busy ? "Setting up…" : "Set up with Calculator"}
+            </Button>
+          </div>
+        ) : null}
+        <Button
+          variant="outline"
+          disabled={busy || state.isPending}
+          onClick={() => state.refresh()}
+        >
+          Check setup again
+        </Button>
+        {checks && (checks.accessibility !== true || checks.screenRecording !== true) ? (
+          <p className="text-xs text-muted-foreground">
+            On {label}, open System Settings → Privacy & Security and allow Cua Driver under
+            Accessibility and Screen Recording. Then check setup again.
+          </p>
+        ) : null}
+      </div>
+      {state.data?.lease ? (
+        <SettingsRow
+          title={`Controlled by ${state.data.lease.label}`}
+          description={state.data.lease.bundleId}
+          control={
+            <Button
+              variant="outline"
+              disabled={!allowed || busy}
               onClick={() => void run({ operation: "release" })}
             >
               Release desktop
             </Button>
-          </div>
-        ) : (
-          <p className="text-sm">No desktop lease</p>
-        )}
-        <fieldset disabled={!allowed} className="space-y-3">
-          <label className="flex gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={enabled ?? value?.enabled ?? false}
-              onChange={(e) => setEnabled(e.target.checked)}
-            />
-            Enable computer use
-          </label>
-          <Input
-            aria-label="Cua Driver executable"
-            value={path ?? value?.command ?? "cua-driver"}
-            onChange={(e) => setPath(e.target.value)}
+          }
+        />
+      ) : null}
+      <SettingsRow
+        title="Enable computer use"
+        control={
+          <Switch
+            aria-label="Enable computer use"
+            checked={isEnabled}
+            disabled={!allowed || busy}
+            onCheckedChange={setEnabled}
           />
-          <Input
-            aria-label="Allowed desktop apps"
-            placeholder="Allowed app bundle IDs, separated by commas"
-            value={apps ?? value?.allowedApps.join(", ") ?? ""}
-            onChange={(e) => setApps(e.target.value)}
-          />
-          {config?.providers.map((p) => (
-            <label key={p.instanceId} className="flex gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={providerIds.includes(p.instanceId)}
-                onChange={(e) =>
+        }
+      />
+      <fieldset disabled={!allowed || busy} className="space-y-3 px-4 py-3">
+        <legend className="text-sm font-medium">Allowed harnesses</legend>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {config?.providers.map((provider) => (
+            <label key={provider.instanceId} className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={providerIds.includes(provider.instanceId)}
+                onCheckedChange={(checked) =>
                   setProviders(
-                    e.target.checked
-                      ? [...providerIds, p.instanceId]
-                      : providerIds.filter((id) => id !== p.instanceId),
+                    checked
+                      ? [...providerIds, provider.instanceId]
+                      : providerIds.filter((id) => id !== provider.instanceId),
                   )
                 }
               />
-              {p.displayName ?? p.instanceId}
+              {provider.displayName ?? provider.driver}
             </label>
           ))}
-          <div className="flex gap-2">
-            <Button
-              onClick={() =>
-                void run({
-                  operation: "configure",
-                  config: {
-                    enabled: enabled ?? value?.enabled ?? false,
-                    command: path ?? value?.command ?? "cua-driver",
-                    allowedApps: (apps ?? value?.allowedApps.join(",") ?? "")
-                      .split(",")
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                    providerInstanceIds: providerIds,
-                  },
-                })
-              }
-            >
-              Save desktop access
-            </Button>
-            <Button variant="outline" onClick={() => state.refresh()}>
-              Check permissions
-            </Button>
-            <Button variant="outline" onClick={() => void run({ operation: "inherit" })}>
-              Use profile desktop policy
-            </Button>
-          </div>
-          <a
-            className="text-sm underline"
-            href="https://cua.ai/docs/cua-driver/quickstart"
-            target="_blank"
-            rel="noreferrer"
+        </div>
+        <ComputerAppAccessPicker
+          rules={selectedApps}
+          supportsRules={config?.environment.capabilities.computerUseAppRules === 1}
+          applications={state.data?.availableApps ?? []}
+          environmentLabel={label}
+          disabled={!allowed || busy}
+          onChange={setApps}
+        />
+        <details className="space-y-2">
+          <summary className="cursor-pointer text-sm text-muted-foreground">
+            Advanced driver settings
+          </summary>
+          <label className="block space-y-1 text-sm">
+            Cua Driver executable
+            <Input
+              value={path ?? value?.command ?? "cua-driver"}
+              onChange={(event) => setPath(event.target.value)}
+            />
+          </label>
+        </details>
+        {isEnabled && (!providerIds.length || !selectedApps.length) ? (
+          <p role="status" className="text-sm text-warning-foreground">
+            Choose at least one harness and app before enabling desktop access.
+          </p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            disabled={
+              !allowed || busy || (isEnabled && (!providerIds.length || !selectedApps.length))
+            }
+            onClick={async () => {
+              const broadRules = selectedApps.filter(
+                (rule) =>
+                  rule.includes("*") &&
+                  (value?.appRulesVersion !== 1 || !value.allowedApps.includes(rule)),
+              );
+              if (
+                isEnabled &&
+                broadRules.length &&
+                !(await requestConfirmDialog(
+                  `Expand desktop access on ${label}?\nRules: ${broadRules.join(", ")}. The selected harnesses may observe and control every matching application.`,
+                ))
+              )
+                return;
+              await run({
+                operation: "configure",
+                config: {
+                  enabled: isEnabled,
+                  command: path ?? value?.command ?? "cua-driver",
+                  allowedApps: selectedApps,
+                  ...(config?.environment.capabilities.computerUseAppRules === 1
+                    ? { appRulesVersion: 1 as const }
+                    : {}),
+                  providerInstanceIds: providerIds,
+                },
+              });
+            }}
           >
-            Install Cua Driver and set OS permissions
-          </a>
-        </fieldset>
-      </div>
+            {busy ? "Saving…" : "Save desktop access"}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={!allowed || busy}
+            onClick={() => void run({ operation: "inherit" })}
+          >
+            Use profile policy
+          </Button>
+        </div>
+        <a
+          className="text-sm underline"
+          href="https://cua.ai/docs/cua-driver/quickstart"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Installation and macOS permission help
+        </a>
+      </fieldset>
     </SettingsSection>
   );
 }

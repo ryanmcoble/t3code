@@ -1,6 +1,6 @@
 # Share MCP connections and skills
 
-Use **Settings → Environments → Setup profiles** to share selected MCP connections and skills between machines. Each environment keeps its own provider accounts and sign-ins.
+Use **Settings → Environments → Environment setup → MCP & skills** to share selected MCP connections and skills between machines. Each environment keeps its own provider accounts and sign-ins.
 
 Create a profile on the environment that will own it. Import MCP connections from a configured harness and enter the skill folders you want to include. A skill includes its companion files, scripts and assets. Review the draft, remove anything you do not want to share, and publish it. Importing and publishing do not change other environments.
 
@@ -37,3 +37,15 @@ t3 setup restore <backup-directory>
 ```
 
 The restored profile has a new identity. Select it and enroll environments again; credentials and subscriptions are excluded from the backup. Use `--base-dir` for a separate T3 installation.
+
+The status separates applied configuration, verified tools, paused synchronization, deferred activation and items needing attention. Active work keeps its current setup until it finishes. Review conflicts to choose which local changes to preserve; configured items still need a successful invocation to become verified.
+
+Edit a profile to enable or disable individual MCP connections and skill packages. Publishing updates subscribed environments when they can activate safely. Disabling a skill removes its profile-managed files through the normal conflict-preserving process; its package stays in the profile so it can be enabled again.
+
+## Share SingleComm work tracking
+
+Enable **SingleComm work tracking** in the profile editor, then publish. Mobile can toggle work tracking on an owned profile too. The profile installs lifecycle hooks and the work skill for selected Claude, Codex, managed OpenCode and Copilot instances, including Claude instances with a separate configuration home. Each subscribed machine uses its own installed SingleComm CLI; its executable, credentials and login sessions are not copied. A missing or incompatible CLI keeps the last applied setup and reports the prerequisite to fix.
+
+Hook changes activate when the environment is idle. Unrelated native settings and hooks are preserved. Edits to managed hooks or the work skill require the same **Keep local** or **Use profile** decision as skills. Disabling work tracking removes only unchanged profile-managed entries and files; detaching can keep them locally. If the work skill is already included as an ordinary skill package, remove that duplicate from the draft before enabling managed work tracking.
+
+**Verified** for hooks means the installed configuration and an isolated lifecycle check passed. It does not prove a model turn loaded the hooks or approve native trust prompts. Trust and provider permissions stay local. Hooks never append bookkeeping to an agent response or force another turn. Hook profiles require a server supporting managed hooks on every destination; older servers retain their previous working profile.

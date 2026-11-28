@@ -1,3 +1,8 @@
+import { SharedProjectEnrollment } from "../project/SharedProjectEnrollment.ts";
+import { SharedProjectContentReplica } from "../project/SharedProjectContentReplica.ts";
+import { ContainerMonitor } from "../containers/ContainerMonitor.ts";
+import { ManagedContainers } from "../containers/ManagedContainers.ts";
+import { SharedProjects } from "../project/SharedProjects.ts";
 import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import { SharedMemory } from "../memory/SharedMemory.ts";
 import { ComputerUse } from "../computer/ComputerUse.ts";
@@ -51,6 +56,11 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(SharedMemory)({}),
   Layer.mock(ProjectStoreV2)({}),
   Layer.mock(ComputerUse)({}),
+  Layer.mock(ContainerMonitor)({}),
+  Layer.mock(ManagedContainers)({}),
+  Layer.mock(SharedProjects)({}),
+  Layer.mock(SharedProjectEnrollment)({}),
+  Layer.mock(SharedProjectContentReplica)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
   Layer.mock(GitVcsDriver)({}),

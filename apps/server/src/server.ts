@@ -1,5 +1,16 @@
+import * as SharedProjectEnrollment from "./project/SharedProjectEnrollment.ts";
+import * as SharedProjectContentSource from "./project/SharedProjectContentSource.ts";
+import * as SharedProjectContentReplica from "./project/SharedProjectContentReplica.ts";
+import * as SharedProjectContentStore from "./project/SharedProjectContentStore.ts";
+import * as WorkspaceMutationGuard from "./workspace/WorkspaceMutationGuard.ts";
+import * as SharedProjectHttp from "./project/sharedProjectHttp.ts";
 import * as ProjectStoreV2 from "./orchestration-v2/ProjectStore.ts";
 import * as MemoryTurnObserver from "./memory/MemoryTurnObserver.ts";
+import * as ContainerMonitor from "./containers/ContainerMonitor.ts";
+import * as ManagedContainers from "./containers/ManagedContainers.ts";
+import * as SharedProjects from "./project/SharedProjects.ts";
+import * as ManagedContainerDriver from "./containers/ManagedContainerDriver.ts";
+import * as DockerAdapter from "./containers/DockerAdapter.ts";
 import * as ComputerUse from "./computer/ComputerUse.ts";
 import * as ComputerDriver from "./computer/ComputerDriver.ts";
 import * as SharedMemory from "./memory/SharedMemory.ts";
@@ -460,6 +471,11 @@ const layerTerminal = TerminalManager.layer.pipe(
   Layer.provide(layerPortScanner),
   Layer.provide(layerNativeTelemetry),
 );
+const layerWorkspaceMutationGuard = WorkspaceMutationGuard.layer.pipe(
+  Layer.provide(layerTerminal),
+  Layer.provide(ProjectionStoreV2.layer),
+  Layer.provide(ProjectStore.layer),
+);
 
 const layerPreview = Layer.empty.pipe(
   Layer.provideMerge(PreviewManager.layer),
@@ -484,7 +500,10 @@ const layerWorkspace = Layer.mergeAll(
   WorkspacePaths.layer,
   layerWorkspaceEntries,
   layerWorkspaceFileSystem,
-  ProjectFolderTransfer.layer.pipe(Layer.provide(layerKnownWorkspaces)),
+  ProjectFolderTransfer.layer.pipe(
+    Layer.provide(layerKnownWorkspaces),
+    Layer.provide(layerWorkspaceMutationGuard),
+  ),
 );
 
 const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
@@ -719,6 +738,43 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
       ),
     ),
   ),
+  Layer.provideMerge(
+    SharedProjectContentReplica.layer.pipe(
+      Layer.provide(ProjectStore.layer),
+      Layer.provide(SharedProjectContentStore.layer),
+      Layer.provide(layerWorkspaceMutationGuard),
+    ),
+  ),
+  Layer.provideMerge(
+    SharedProjectContentSource.layer.pipe(
+      Layer.provide(ProjectStore.layer),
+      Layer.provide(layerWorkspaceMutationGuard),
+    ),
+  ),
+  Layer.provideMerge(SharedProjectEnrollment.layer),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      ContainerMonitor.layer.pipe(
+        Layer.provide(DockerAdapter.layer.pipe(Layer.provide(ProcessRunner.layer))),
+        Layer.provide(layerKnownWorkspaces),
+        Layer.provide(ProjectStore.layer),
+        Layer.provide(layerServerSettings),
+      ),
+      ManagedContainers.layer.pipe(
+        Layer.provide(ManagedContainerDriver.layer.pipe(Layer.provide(ProcessRunner.layer))),
+        Layer.provide(layerKnownWorkspaces),
+        Layer.provide(ProjectStore.layer),
+        Layer.provide(ProjectionStoreV2.layer),
+      ),
+      SharedProjects.layer.pipe(
+        Layer.provide(layerKnownWorkspaces),
+        Layer.provide(ProjectStore.layer),
+        Layer.provide(layerVcsDriverRegistry),
+        Layer.provide(ServerEnvironment.layerIdentity),
+        Layer.provide(layerRepositoryIdentityResolver),
+      ),
+    ),
+  ),
   Layer.provideMerge(layerWorkspace),
   Layer.provideMerge(ProjectEnrichmentService.layer),
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
@@ -778,6 +834,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
     SetupProfileHttp.layer,
+    SharedProjectHttp.layer,
     MemoryHttp.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,

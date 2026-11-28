@@ -69,6 +69,55 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("matches shared-file mutation grants at both availability and execution", () =>
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const receive = createCommandPermissions(runtime, WS_METHODS.sharedProjectEnrollmentCommand);
+      const prepare = createCommandPermissions(runtime, WS_METHODS.sharedProjectContentCommand);
+      const input = {
+        operation: "receive-files",
+        sharedProjectId: "sample",
+        enabled: true,
+      } as const;
+      const command = {
+        operation: "resolve",
+        sharedProjectId: "sample",
+        rootId: "docs",
+        expectedGeneration: 1,
+        choice: "owner",
+      } as const;
+      for (const scopes of [
+        [AuthSettingsWriteScope],
+        [AuthFilesystemWriteScope],
+        [AuthSettingsWriteScope, AuthFilesystemWriteScope],
+      ]) {
+        registry.set(
+          sessions(env),
+          AsyncResult.success({ ...grant(false), scopes, permissions: scopes }),
+        );
+        const allowed = scopes.length === 2;
+        expect(registry.get(receive.permissionAtom(env, input))).toBe(allowed);
+        expect(registry.get(prepare.permissionAtom(env, command))).toBe(allowed);
+        expect((yield* receive.authorize(registry, env, input).pipe(Effect.result))._tag).toBe(
+          allowed ? "Success" : "Failure",
+        );
+        expect((yield* prepare.authorize(registry, env, command).pipe(Effect.result))._tag).toBe(
+          allowed ? "Success" : "Failure",
+        );
+      }
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthSettingsWriteScope],
+          permissions: [AuthSettingsWriteScope],
+        }),
+      );
+      const stop = { ...input, enabled: false };
+      expect(registry.get(receive.permissionAtom(env, stop))).toBe(true);
+      yield* receive.authorize(registry, env, stop);
+    }).pipe(Effect.scoped),
+  );
   it.effect.each([
     [WS_METHODS.setupProfilesCommand, AuthSettingsWriteScope],
     [WS_METHODS.setupProfilesImport, AuthSettingsWriteScope],

@@ -16,7 +16,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 const folderWatches = vi.hoisted(
-  () => new Map<string, { changed: () => void; close: ReturnType<typeof vi.fn> }>(),
+  () =>
+    new Map<string, { changed: (filename?: string) => void; close: ReturnType<typeof vi.fn> }>(),
 );
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs")>();
@@ -25,7 +26,10 @@ vi.mock("node:fs", async (importOriginal) => {
     watch: (root: string, _options: unknown, listener: (event: string, name: string) => void) => {
       const close = vi.fn();
       const watcher = { close, unref: () => {}, on: () => watcher };
-      folderWatches.set(root, { changed: () => listener("change", "nested/file"), close });
+      folderWatches.set(root, {
+        changed: (filename = "nested/file") => listener("change", filename),
+        close,
+      });
       return watcher;
     },
   };
@@ -40,19 +44,67 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
 import * as ProjectFolderTransfer from "./ProjectFolderTransfer.ts";
+import * as WorkspaceMutationGuard from "../workspace/WorkspaceMutationGuard.ts";
 
 const decodeFolderImport = Schema.decodeUnknownSync(ProjectFolderImportInput);
 
-const layer = ProjectFolderTransfer.layer.pipe(
-  Layer.provide(Layer.mock(KnownWorkspaces.KnownWorkspaces)({ assertContains: () => Effect.void })),
-  Layer.provide(
-    ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-folder-config-" }),
-  ),
-  Layer.provideMerge(NodeServices.layer),
+const layerWithGuard = (guard: WorkspaceMutationGuard.WorkspaceMutationGuard["Service"]) =>
+  ProjectFolderTransfer.layer.pipe(
+    Layer.provide(Layer.succeed(WorkspaceMutationGuard.WorkspaceMutationGuard, guard)),
+    Layer.provide(
+      Layer.mock(KnownWorkspaces.KnownWorkspaces)({ assertContains: () => Effect.void }),
+    ),
+    Layer.provide(
+      ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-folder-config-" }),
+    ),
+    Layer.provideMerge(NodeServices.layer),
+  );
+const layer = layerWithGuard({ withIdle: (_cwds, effect) => effect });
+
+it.effect(
+  "keeps staged bytes for retry when active workspace activity blocks folder installation",
+  () => {
+    let blocked = true;
+    const guarded = layerWithGuard({
+      withIdle: (_cwds, effect) =>
+        blocked
+          ? Effect.fail(new WorkspaceMutationGuard.WorkspaceBusyError({ reason: "active" }))
+          : effect,
+    });
+    return Effect.gen(function* () {
+      const { source, destination, service } = yield* fixture;
+      yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(source, "README"), "preserved"));
+      const exported = yield* service.exportFolder({ cwd: source });
+      const imported = yield* service.importFolder({
+        destinationPath: destination,
+        entries: exported.entries,
+      });
+      const chunk = yield* service.read({
+        transferId: exported.transferId,
+        relativePath: "README",
+        offset: 0,
+      });
+      yield* service.write({
+        transferId: imported.transferId,
+        relativePath: "README",
+        offset: 0,
+        ...chunk,
+      });
+      const result = yield* service.finish({ transferId: imported.transferId }).pipe(Effect.result);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") expect(result.failure.reason).toBe("busy");
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(destination)).toBe(false);
+      blocked = false;
+      yield* service.finish({ transferId: imported.transferId });
+      expect(yield* fs.readFileString(NodePath.join(destination, "README"))).toBe("preserved");
+    }).pipe(Effect.scoped, Effect.provide(guarded));
+  },
 );
 
 const fixture = Effect.gen(function* () {
@@ -63,6 +115,146 @@ const fixture = Effect.gen(function* () {
   yield* Effect.promise(() => NodeFSP.mkdir(source));
   return { root, source, destination, service: yield* ProjectFolderTransfer.ProjectFolderTransfer };
 });
+
+it.effect(
+  "shares content watches with legacy sync, filters excluded changes, and closes only after the final interest",
+  () =>
+    Effect.gen(function* () {
+      const { source, service } = yield* fixture;
+      const cwd = yield* Effect.promise(() => NodeFSP.realpath(source));
+      const contentPolicy = { mode: "project-content" as const, excludePaths: ["private-notes"] };
+      const first = yield* service.observeContent({ cwd, observerId: "member-a", contentPolicy });
+      const second = yield* service.observeContent({ cwd, observerId: "member-b", contentPolicy });
+      const watch = folderWatches.get(cwd)!;
+      expect(first.split(":")[0]).toBe(second.split(":")[0]);
+      yield* service.status({ cwd });
+      expect(folderWatches.get(cwd)).toBe(watch);
+      expect(watch.close).not.toHaveBeenCalled();
+      watch.changed(".git/config");
+      watch.changed("private-notes/draft.md");
+      expect(yield* service.observeContent({ cwd, observerId: "member-a", contentPolicy })).toBe(
+        first,
+      );
+      watch.changed("README.md");
+      expect(
+        yield* service.observeContent({ cwd, observerId: "member-a", contentPolicy }),
+      ).not.toBe(first);
+      expect(
+        yield* service.observeContent({ cwd, observerId: "member-b", contentPolicy }),
+      ).not.toBe(second);
+      yield* service.setSync({
+        cwd,
+        state: {
+          peerEnvironmentId: EnvironmentId.make("legacy-peer"),
+          peerPath: "/peer",
+          baseline: [],
+          automatic: true,
+        },
+      });
+      yield* service.status({ cwd });
+      yield* service.releaseContentObservation({ cwd, observerId: "member-a" });
+      yield* service.releaseContentObservation({ cwd, observerId: "member-b" });
+      expect(watch.close).not.toHaveBeenCalled();
+      yield* service.setSync({ cwd, state: null });
+      expect(watch.close).toHaveBeenCalledOnce();
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("expires abandoned content observers and resets their revision after reacquisition", () =>
+  Effect.gen(function* () {
+    const { source, service } = yield* fixture;
+    const cwd = yield* Effect.promise(() => NodeFSP.realpath(source));
+    const input = {
+      cwd,
+      observerId: "disconnected-member",
+      contentPolicy: { mode: "project-content" as const, excludePaths: [] },
+    };
+    const first = yield* service.observeContent(input);
+    const watch = folderWatches.get(cwd)!;
+    yield* TestClock.adjust("6 minutes");
+    expect(watch.close).toHaveBeenCalledOnce();
+    const next = yield* service.observeContent(input);
+    expect(next).not.toBe(first);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect(
+  "filters project replication before reading excluded trees, and rejects injected excluded entries and baselines",
+  () =>
+    Effect.gen(function* () {
+      const { source, destination, service } = yield* fixture;
+      const contentPolicy = { mode: "project-content" as const, excludePaths: ["private-notes"] };
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.join(source, "node_modules"));
+        await NodeFSP.mkdir(NodePath.join(source, ".git"));
+        await NodeFSP.writeFile(NodePath.join(source, ".env"), "secret-test-value");
+        await NodeFSP.writeFile(NodePath.join(source, "private-notes"), "private-test-value");
+        await NodeFSP.writeFile(NodePath.join(source, "README.md"), "public source");
+        await NodeFSP.writeFile(NodePath.join(source, "node_modules", "generated"), "generated");
+        await NodeFSP.writeFile(NodePath.join(source, ".git", "config"), "private remote");
+      });
+      const exported = yield* service.exportFolder({ cwd: source, contentPolicy });
+      expect(exported.entries.map((entry) => entry.path)).toEqual(["README.md"]);
+      yield* service.exportEnd({ transferId: exported.transferId, validate: true });
+      const injected = { path: ".env", kind: "file" as const, byteLength: 0, mode: 0o600 };
+      for (const entries of [[injected], [{ ...injected, path: ".git" }]]) {
+        const result = yield* service
+          .importFolder({ destinationPath: destination, entries, contentPolicy })
+          .pipe(Effect.result);
+        expect(result._tag).toBe("Failure");
+      }
+      const baseline = yield* service
+        .importFolder({
+          destinationPath: destination,
+          entries: [],
+          previousEntries: [injected],
+          incremental: true,
+          contentPolicy,
+        })
+        .pipe(Effect.result);
+      expect(baseline._tag).toBe("Failure");
+      const complete = yield* service.exportFolder({ cwd: source });
+      expect(complete.entries.some((entry) => entry.path === ".env")).toBe(true);
+      yield* service.exportEnd({ transferId: complete.transferId, validate: true });
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+);
+
+it.effect("preserves excluded destination files during incremental project content updates", () =>
+  Effect.gen(function* () {
+    const { source, destination, service } = yield* fixture;
+    const contentPolicy = { mode: "project-content" as const, excludePaths: [] };
+    yield* Effect.promise(async () => {
+      await NodeFSP.mkdir(destination);
+      await NodeFSP.writeFile(NodePath.join(destination, ".env"), "local-only-test-secret");
+      await NodeFSP.writeFile(NodePath.join(destination, "old.txt"), "old");
+    });
+    const previous = yield* service.exportFolder({ cwd: destination, contentPolicy });
+    const next = yield* service.exportFolder({ cwd: source, contentPolicy });
+    const replacement = yield* service
+      .importFolder({
+        destinationPath: destination,
+        entries: next.entries,
+        previousEntries: previous.entries,
+        contentPolicy,
+      })
+      .pipe(Effect.result);
+    expect(replacement._tag).toBe("Failure");
+    const imported = yield* service.importFolder({
+      destinationPath: destination,
+      entries: next.entries,
+      previousEntries: previous.entries,
+      incremental: true,
+      contentPolicy,
+    });
+    yield* service.finish(imported);
+    expect(yield* Effect.promise(() => NodeFSP.readdir(destination))).toEqual([".env"]);
+    expect(
+      yield* Effect.promise(() => NodeFSP.readFile(NodePath.join(destination, ".env"), "utf8")),
+    ).toBe("local-only-test-secret");
+    yield* service.exportEnd({ transferId: previous.transferId, validate: false });
+    yield* service.exportEnd({ transferId: next.transferId, validate: true });
+  }).pipe(Effect.scoped, Effect.provide(layer)),
+);
 
 const commandAdapter =
   (requests: Queue.Queue<Effect.Effect<void>>) =>

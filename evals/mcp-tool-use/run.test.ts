@@ -241,6 +241,19 @@ const childCase: McpToolUseCase = {
   expect: { calls: [{ tool: "link_pull_request" }], notCalls: ["watch_pull_request"] },
 };
 
+it("offers the Docker and shared-project tools from the production toolkits", () => {
+  const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+  assert.includeMembers(
+    base.t3.map((tool) => tool.name),
+    [
+      "mcp__t3-code__t3_containers",
+      "mcp__t3-code__t3_container_manage",
+      "mcp__t3-code__t3_shared_projects",
+      "mcp__t3-code__t3_shared_project_configure",
+    ],
+  );
+});
+
 it("rebuilds the template from this checkout and sends a child T3's task prompt", () => {
   const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
   const system = base.system.map((block) => String(block.text));

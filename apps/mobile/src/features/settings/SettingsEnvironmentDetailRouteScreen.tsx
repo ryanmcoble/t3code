@@ -1,3 +1,5 @@
+import { ContainerSection } from "../containers/ContainerSection";
+import { SharedProjectsSection } from "./SharedProjectsSection";
 import { SharedMemorySection } from "./SharedMemorySection";
 import { ComputerUseSection } from "./ComputerUseSection";
 import { SetupProfileSection } from "./SetupProfileSection";
@@ -287,8 +289,10 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                   ) : null}
                 </SettingsSection>
                 <SetupProfileSection environmentId={environmentId} />
+                <SharedProjectsSection environmentId={environmentId} />
                 <SharedMemorySection environmentId={environmentId} />
                 <ComputerUseSection environmentId={environmentId} />
+                <ContainerSection environmentId={environmentId} />
                 <SettingsSection title="Providers">
                   <SettingsActionRow
                     icon="arrow.clockwise"

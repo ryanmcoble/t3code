@@ -37,19 +37,28 @@ export const SetupSkillFile = Schema.Struct({
 });
 export const SetupSkill = Schema.Struct({
   name: Name,
+  enabled: Schema.optionalKey(Schema.Boolean),
   files: Schema.Array(SetupSkillFile),
   drivers: Schema.Array(Name),
 });
 export type SetupSkill = typeof SetupSkill.Type;
+
+export const SetupHook = Schema.Struct({
+  integration: Schema.Literal("singlecomm-work"),
+  enabled: Schema.Boolean,
+  drivers: Schema.Array(Name),
+});
+export type SetupHook = typeof SetupHook.Type;
 
 export const SetupProfile = Schema.Struct({
   id: Name,
   ownerEnvironmentId: EnvironmentId,
   name: Name,
   revision: Revision,
-  schemaVersion: Schema.Literal(1),
+  schemaVersion: Schema.Literals([1, 2]),
   connections: Schema.Array(SetupMcpConnection),
   skills: Schema.Array(SetupSkill),
+  hooks: Schema.optionalKey(Schema.Array(SetupHook)),
   memoryScopes: Schema.optionalKey(Schema.Array(MemoryScopeReference)),
   computerUse: Schema.optionalKey(ComputerUseProfilePolicy),
 });
@@ -58,7 +67,7 @@ export type SetupProfile = typeof SetupProfile.Type;
 export const SetupItemStatus = Schema.Struct({
   name: Schema.String,
   instanceId: ProviderInstanceId,
-  kind: Schema.Literals(["mcp", "skill"]),
+  kind: Schema.Literals(["mcp", "skill", "hook"]),
   status: Schema.Literals([
     "configured",
     "verified",
@@ -109,6 +118,7 @@ export const SetupProfilePublishInput = Schema.Struct({
   expectedRevision: Revision,
   connections: Schema.Array(SetupMcpConnection),
   skills: Schema.Array(SetupSkill),
+  hooks: Schema.optionalKey(Schema.Array(SetupHook)),
   memoryScopes: Schema.optionalKey(Schema.Array(MemoryScopeReference)),
   computerUse: Schema.optionalKey(ComputerUseProfilePolicy),
 });

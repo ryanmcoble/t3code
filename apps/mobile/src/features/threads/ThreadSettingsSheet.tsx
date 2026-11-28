@@ -1,3 +1,5 @@
+import { ContainerSection } from "../containers/ContainerSection";
+import { useProjects } from "../../state/entities";
 import { ProjectFolderActions } from "../projects/ProjectFolderActions";
 import {
   getPromptControlledTraits,
@@ -1501,6 +1503,7 @@ export function ExistingThreadSettingsRouteScreen({
 }: StaticScreenProps<ExistingThreadSettingsRouteParams>) {
   const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
   // Reads the same environmentId/threadId params as the Thread route beneath it.
+  const projects = useProjects();
   const { selectedThread, selectedThreadDetailRef, selectedEnvironmentRuntime } =
     useThreadSelection();
   // Streamed text would otherwise re-render the whole model picker on every delta.
@@ -1545,17 +1548,31 @@ export function ExistingThreadSettingsRouteScreen({
       environmentId={selectedThread.environmentId}
       projectId={selectedThread.projectId}
       folderActions={
-        <ProjectFolderActions
-          projectRef={{
-            environmentId: selectedThread.environmentId,
-            projectId: selectedThread.projectId,
-          }}
-          sourceThreadRef={{
-            environmentId: selectedThread.environmentId,
-            threadId: selectedThread.id,
-          }}
-          threadActive={selectedThread.runtime?.activeRunId != null}
-        />
+        <>
+          <ProjectFolderActions
+            projectRef={{
+              environmentId: selectedThread.environmentId,
+              projectId: selectedThread.projectId,
+            }}
+            sourceThreadRef={{
+              environmentId: selectedThread.environmentId,
+              threadId: selectedThread.id,
+            }}
+            threadActive={selectedThread.runtime?.activeRunId != null}
+          />
+          <ContainerSection
+            threadId={selectedThread.id}
+            environmentId={selectedThread.environmentId}
+            folders={[
+              selectedThread.worktreePath,
+              projects.find(
+                (project) =>
+                  project.environmentId === selectedThread.environmentId &&
+                  project.id === selectedThread.projectId,
+              )?.workspaceRoot,
+            ].filter((folder): folder is string => Boolean(folder))}
+          />
+        </>
       }
       providerInstanceId={modelSelection.instanceId}
       {...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {})}

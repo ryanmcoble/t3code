@@ -1,6 +1,19 @@
 # Share memory and desktop tools
 
-Use **Settings → Environments** to manage shared memory and computer use for each connected machine. The mobile app exposes the same controls under the environment's settings.
+Use **Settings → Environments → Environment setup** to choose a machine, then open **Memory** or **Computer use**. The mobile app exposes the same controls under the environment's settings.
+
+## Containers
+
+Open **Settings → Environments → Containers** to inspect Docker on a selected machine.
+Inside a thread, open the details panel and expand **Containers** to see containers
+linked to its project or worktree. On mobile, use **Containers** in that thread's
+settings. Search and filter the inventory, expand a container for its ports and
+measurements, or request recent logs. Collection stops when the view is closed or
+backgrounded; cached and partial results are labeled.
+
+T3 uses Compose paths and bind mounts to suggest folder links. You can include or exclude a container explicitly, or link a Compose stack when its configuration files establish its identity. Saved stack links survive container replacement. Remove obsolete links under saved folder rules. These links describe relationships; they do not grant cleanup ownership or change Docker resources. Only local Docker engines are supported. Agents with diagnostics access can inspect the same inventory and bounded logs through `t3_containers`.
+
+Ask an agent to provision a T3-managed disposable container when you want lifecycle controls. Creation requires an installed image without declared volumes; it does not pull images. Published ports bind only to loopback. **Managed resources** shows ownership receipts and start, stop, retain, recovery and release actions on desktop and mobile. Retention blocks release, and shared references protect other threads. Release removes the owned container while preserving mounted workspace files and Docker volumes. Existing unowned containers cannot be adopted or released through these controls.
 
 ## Shared memory
 
@@ -22,11 +35,15 @@ A setup profile may advertise memory owner/scope references and access policy. C
 
 ## Computer use
 
+Check setup before enabling access. T3 reports driver availability, Accessibility and Screen Recording separately; available permissions do not prove an app can be captured. **Set up with Calculator** prepares a narrow starting policy for your enabled harnesses. Ask an agent to observe Calculator and perform a harmless action to verify the full path.
+
+Choose applications by name from the searchable application list. **Selected applications** limits access to the checked apps; **All applications** permits every app on that environment. Advanced wildcard rules allow an app-identifier prefix, for example `com.apple.*`. Broad rules require confirmation before saving. Each harness still needs to be selected, and operating-system permissions remain local. Older servers must be updated before using application-rule controls.
+
 Install and start [Cua Driver](https://cua.ai/docs/cua-driver/quickstart) 0.38 or newer in the desktop session on each environment you want agents to operate. It is a separate prerequisite; T3 does not install Cua Spaces or copy OS permissions. On macOS, enable Cua Driver's Accessibility and Screen Recording permissions. T3's permission checks do not open those prompts.
 
-Enable computer use, select the harness instances, and enter the allowed app identifiers. On macOS these are bundle IDs such as `com.apple.calculator`. A local executable override is available when the driver is outside the server's PATH. Desktop policy may come from the applied setup profile; an explicit local configuration takes precedence until you select **Use profile desktop policy**.
+Enable computer use and select the harness instances and permitted applications. A local executable override is available when the driver is outside the server's PATH. Desktop policy may come from the applied setup profile; an explicit local configuration takes precedence until you select **Use profile desktop policy**.
 
-In a full-access/default thread, agents use `t3_computer_apps`, acquire an app lease with `t3_computer_control`, and inspect a window with `t3_computer_observe`. Observation returns accessibility information and an image. Input is limited to that thread's leased app. The agent should observe after acting and release the desktop when finished.
+In a full-access/default thread, agents use `t3_computer_apps`, launch a permitted closed app through `t3_computer_control` when needed, acquire its app lease, and inspect a window with `t3_computer_observe`. Observation returns accessibility information and an image. Input is limited to that thread's leased app. The agent should observe after acting and release the desktop when finished.
 
 Each lease binds an exact app process and window. One T3 thread controls an environment's desktop at a time. The lease expires after two idle minutes. Settings show its owner and provide **Release desktop**, including from mobile. Release cancels a pending driver request and prevents further calls with that lease. Direct Cua clients outside T3 do not participate in this coordination.
 

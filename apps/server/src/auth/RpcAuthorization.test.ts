@@ -80,6 +80,16 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("keeps shared project credentials behind access management separately from local enrollment", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.sharedProjectGrant)).toBe(AuthAccessWriteScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.sharedProjectEnrollmentCommand)).toBe(
+      AuthSettingsWriteScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.sharedProjectEnrollmentState)).toBe(
+      AuthSettingsWriteScope,
+    );
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
     for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
@@ -95,6 +105,25 @@ describe("RPC authorization scopes", () => {
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }
+  });
+
+  it("keeps container inventory and logs read-only while association changes require settings access", () => {
+    for (const method of [
+      WS_METHODS.containersSubscribe,
+      WS_METHODS.containersSnapshot,
+      WS_METHODS.containersLogs,
+    ])
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthDiagnosticsReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.containersAssociate)).toBe(AuthSettingsWriteScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.containersManagedList)).toBe(
+      AuthDiagnosticsReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.containersManagedCreate)).toBe(
+      AuthEnvironmentMaintainScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.containersManagedCommand)).toBe(
+      AuthEnvironmentMaintainScope,
+    );
   });
 
   it("rejects unknown RPC method names", () => {
@@ -427,6 +456,108 @@ it.effect("denies manual cleanup before the handler without settings permission"
     expect(yield* client[WS_METHODS.serverRunStorageCleanup]({}).pipe(Effect.flip)).toMatchObject({
       requiredPermission: AuthSettingsWriteScope,
     });
+    expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect.each([
+  { scopes: [AuthSettingsWriteScope], missing: AuthFilesystemWriteScope, operation: "write" },
+  { scopes: [AuthFilesystemWriteScope], missing: AuthSettingsWriteScope, operation: "write" },
+  { scopes: [AuthSettingsWriteScope], missing: AuthFilesystemReadScope, operation: "read" },
+  { scopes: [AuthFilesystemReadScope], missing: AuthSettingsWriteScope, operation: "read" },
+])("protects shared content $operation with only $scopes", ({ scopes, missing, operation }) =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          | typeof WS_METHODS.sharedProjectContentCommand
+          | typeof WS_METHODS.sharedProjectContentConflict
+        > =>
+          tag !== WS_METHODS.sharedProjectContentCommand &&
+          tag !== WS_METHODS.sharedProjectContentConflict,
+      ),
+    );
+    let handled = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.sharedProjectContentCommand, () =>
+            Effect.sync(() => {
+              handled = true;
+            }),
+          ),
+          group.toLayerHandler(WS_METHODS.sharedProjectContentConflict, () =>
+            Effect.sync(() => {
+              handled = true;
+              return { generation: 1, paths: [], total: 0, nextCursor: null };
+            }),
+          ),
+          RpcAuthorization.layer(scopes),
+        ),
+      ),
+    );
+    const result =
+      operation === "write"
+        ? yield* client[WS_METHODS.sharedProjectContentCommand]({
+            operation: "refresh",
+            sharedProjectId: "sample",
+            rootId: "docs",
+          }).pipe(Effect.flip)
+        : yield* client[WS_METHODS.sharedProjectContentConflict]({
+            sharedProjectId: "sample",
+            rootId: "docs",
+            cursor: 0,
+          }).pipe(Effect.flip);
+    expect(result).toMatchObject({ requiredPermission: missing });
+    expect(handled).toBe(false);
+  }).pipe(Effect.scoped),
+);
+
+it.effect.each([
+  { scopes: [AuthSettingsWriteScope], missing: AuthFilesystemWriteScope },
+  { scopes: [AuthFilesystemWriteScope], missing: AuthSettingsWriteScope },
+])("does not enable project file receiving with only $scopes", ({ scopes, missing }) =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.sharedProjectEnrollmentCommand
+        > => tag !== WS_METHODS.sharedProjectEnrollmentCommand,
+      ),
+    );
+    let handled = false;
+    const client = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          group.toLayerHandler(WS_METHODS.sharedProjectEnrollmentCommand, () =>
+            Effect.sync(() => {
+              handled = true;
+            }),
+          ),
+          RpcAuthorization.layer(scopes),
+        ),
+      ),
+    );
+    for (const input of [
+      {
+        operation: "connect" as const,
+        sharedProjectId: "sample",
+        ownerEnvironmentId: EnvironmentId.make("owner"),
+        sourceUrl: "https://owner.test",
+        token: "test-only",
+        receiveFiles: true,
+      },
+      { operation: "receive-files" as const, sharedProjectId: "sample", enabled: true },
+    ])
+      expect(
+        yield* client[WS_METHODS.sharedProjectEnrollmentCommand](input).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: missing });
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
 );

@@ -2,6 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthMcpClientAccess,
   AuthStandardClientScopes,
+  AuthFilesystemReadScope,
+  AuthFilesystemWriteScope,
   type AuthCreatePairingCredentialInput,
   EnvironmentHttpApi,
   mcpClientScopes,
@@ -502,6 +504,53 @@ it.live("a code minted with an access level's scopes approves that access", () =
       }
     }),
   ),
+);
+
+it.live(
+  "requires explicit file grants for new full-access MCP sessions without expanding old grants",
+  () =>
+    withRoutes((handler, auth) =>
+      Effect.gen(function* () {
+        const params = authorizeParams(yield* registeredClientId(handler));
+        const oldScopes = mcpClientScopes("full-access").filter(
+          (scope) => scope !== AuthFilesystemReadScope && scope !== AuthFilesystemWriteScope,
+        );
+        const old = yield* auth.issuePairingCredential({ scopes: [...oldScopes] });
+        expect(
+          (yield* decide(handler, params, {
+            _tag: "pairing-code",
+            access: "full-access",
+            code: old.credential,
+          })).status,
+        ).toBe(400);
+        expect(
+          (yield* decide(handler, params, {
+            _tag: "pairing-code",
+            access: "auto",
+            code: old.credential,
+          })).status,
+        ).toBe(200);
+        const issued = yield* auth.issueMcpClientSession({
+          label: "Owner file CLI",
+          access: "full-access",
+          peerLink: false,
+          client: { deviceType: "bot" },
+        });
+        const session = yield* auth.authenticateMcpClient(
+          HttpServerRequest.fromWeb(
+            at("/mcp", { headers: { authorization: `Bearer ${issued.token}` } }),
+          ),
+        );
+        expect(session.scopes).toContain(AuthFilesystemReadScope);
+        expect(session.scopes).toContain(AuthFilesystemWriteScope);
+        for (const access of AuthMcpClientAccess.literals.filter(
+          (value) => value !== "full-access",
+        )) {
+          expect(mcpClientScopes(access)).not.toContain(AuthFilesystemReadScope);
+          expect(mcpClientScopes(access)).not.toContain(AuthFilesystemWriteScope);
+        }
+      }),
+    ),
 );
 
 it.live("one-click approves only access the browser session holds the scopes for", () =>

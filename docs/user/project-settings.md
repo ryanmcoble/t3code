@@ -46,6 +46,59 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Shared project folders
+
+On web and desktop, open **Settings → Environments → Environment setup**, choose a
+machine, and select **Shared projects**. On mobile, open that environment's settings
+and its **Shared projects** section. Create a named project from registered local
+folders and select its member machines. Each root is either a Git repository or a
+folder of files; each member keeps its own local paths.
+
+Use **Manage folders** to map every root to a distinct registered local project.
+The server checks folder access and repository type before saving. A changed project
+revision requires reviewing the mappings again. **Folders mapped** describes the
+saved mapping; it does not establish synchronized content or execution readiness.
+
+Detach removes the local mapping while preserving the project folders and files.
+The owner can archive and restore the shared project without deleting those files.
+Selecting members alone does not grant remote access or transfer project content.
+
+On a member machine, use **Follow a project owner**, select the owner and one of
+its projects that includes this machine, then enroll. Both environments need
+shared project enrollment support, and the destination must be able to reach the
+owner's HTTPS route. The connection follows project definitions in the background,
+including after restarting T3; file-content replication is separate.
+
+For non-Git roots, enable **Receive file folders** on the member after enrollment
+and mapping. This grants scoped file access to the owner and receives its snapshots
+in the background, even with Settings closed. Local edits are kept and are not
+published back to the owner. Git history, account sign-ins, and execution readiness
+are prepared separately.
+
+Open **Folder preparation** to check saved status. Conflicting files keep both
+versions privately on the receiving machine. Review the paths and choose to keep
+local versions or use saved owner versions; either choice preserves the recovery
+copies. If files changed since the saved conflict, refresh before resolving it.
+Stopping file receiving preserves local files and recovery copies.
+
+Agents use `t3_shared_project_files` to inspect preparation and conflict paths, and
+`t3_shared_project_files_prepare` to refresh or resolve reviewed conflicts. The CLI
+uses the same server services: `t3 shared-project files status <project-id>`,
+`conflicts <project-id> <root-id>`, `refresh <project-id> <root-id>`, and
+`resolve <project-id> <root-id> --generation <reviewed-generation> --choice local|owner`.
+Use `--base-dir` for an isolated T3 home or `--environment` for a linked machine.
+File receiving must already be enabled; these commands do not grant new access.
+MCP connections need explicit filesystem grants for file inspection and recovery.
+New full-access approvals include these grants; older saved credentials retain
+their original permissions and may need a new approval. Local owner CLI sessions
+are temporary and are revoked when each command ends.
+
+Pause stops background definition updates. Refresh checks the owner immediately.
+Disconnect removes the local subscription credential and detaches local mappings,
+preserving the folders and cached project history. The owner can revoke a member's
+grant, and removing its membership prevents further reads. An unreachable or
+unauthorized owner remains a visible blocker rather than making cached content ready.
+
 ## Worktree branch names
 
 In **Settings → Worktrees → Worktree branch naming**, choose a static prefix,
@@ -261,3 +314,5 @@ thread, choose the other machine and **Continue** to open a continuation with th
 transcript in its existing folder. File syncing runs independently of this handoff.
 
 Automatic sync updates individual files and preserves the folder and unchanged file handles. If interrupted mid-sync, the next comparison resumes from the saved baseline. Conflicting edits are kept on both machines and pause syncing until resolved.
+
+Folder updates wait for active threads and terminal commands in the affected workspace to finish. If T3 cannot verify that the workspace is idle, it pauses the update and keeps the staged copy available for retry.

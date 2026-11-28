@@ -32,9 +32,10 @@ export const ComputerStandardToolkit = Toolkit.make(
   Tool.make("t3_computer_control", {
     ...shared,
     description:
-      "Acquire, use or release this thread's desktop lease. Only one thread controls a desktop at a time. Leases expire after two idle minutes. User release revokes the lease. Use observe to verify actions; no implicit target switching.",
+      "Launch an allowed app, then acquire its exact window before observe or act. One thread owns the desktop; leases expire after two idle minutes or user release. Await dependent actions sequentially and verify with observe. Release when done.",
     parameters: Schema.Struct({
       command: Schema.Union([
+        Schema.Struct({ operation: Schema.Literal("launch"), bundleId: Schema.String }),
         Schema.Struct({
           operation: Schema.Literal("acquire"),
           pid: Schema.Int,
@@ -49,7 +50,7 @@ export const ComputerStandardToolkit = Toolkit.make(
         Schema.Struct({ operation: Schema.Literal("release"), leaseId: LeaseId }),
       ]),
     }),
-    success: Schema.NullOr(ComputerLease),
+    success: Schema.NullOr(Schema.Union([ComputerLease, ComputerDriverResult])),
   }).annotate(Tool.Destructive, true),
 );
 export const ComputerObserveTool = Tool.make("t3_computer_observe", {

@@ -1,4 +1,15 @@
 import {
+  ContainerSnapshot,
+  ContainerLogsInput,
+  ContainerLogsResult,
+  ContainerAssociationCommand,
+  ContainerError,
+  ManagedContainer,
+  ManagedContainerInventory,
+  ManagedContainerCreate,
+  ManagedContainerCommand,
+} from "./containers.ts";
+import {
   StandaloneAppDefinition,
   StandaloneAppSummary,
   StandaloneAppTarget,
@@ -7,6 +18,26 @@ import {
   StandaloneAppError,
 } from "./standaloneApps.ts";
 import { ComputerUseState, ComputerUseCommand, ComputerUseError } from "./computerUse.ts";
+import {
+  SharedProjectContentStateInput,
+  SharedProjectContentState,
+  SharedProjectContentCommand,
+  SharedProjectContentConflictInput,
+  SharedProjectContentConflictPage,
+  SharedProjectContentError,
+} from "./sharedProjectContent.ts";
+import {
+  SharedProjectState,
+  SharedProjectEnrollmentState,
+  SharedProjectEnrollmentCommand,
+  SharedProjectGrantInput,
+  SharedProjectGrantResult,
+  SharedProjectPublish,
+  SharedProjectManifest,
+  SharedProjectBind,
+  SharedProjectBinding,
+  SharedProjectError,
+} from "./sharedProject.ts";
 import {
   MemoryState,
   MemoryQuery,
@@ -85,7 +116,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString, ThreadId } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString, ThreadId } from "./baseSchemas.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -571,6 +602,23 @@ export const WS_METHODS = {
   setupProfilesCommand: "setupProfiles.command",
   setupProfilesImport: "setupProfiles.import",
   setupProfilesGrant: "setupProfiles.grant",
+  containersSubscribe: "containers.subscribe",
+  containersSnapshot: "containers.snapshot",
+  containersLogs: "containers.logs",
+  containersAssociate: "containers.associate",
+  containersManagedList: "containers.managedList",
+  containersManagedCreate: "containers.managedCreate",
+  containersManagedCommand: "containers.managedCommand",
+  sharedProjectsState: "sharedProjects.state",
+  sharedProjectsPublish: "sharedProjects.publish",
+  sharedProjectsBind: "sharedProjects.bind",
+  sharedProjectsUnbind: "sharedProjects.unbind",
+  sharedProjectEnrollmentState: "sharedProjects.enrollmentState",
+  sharedProjectEnrollmentCommand: "sharedProjects.enrollmentCommand",
+  sharedProjectGrant: "sharedProjects.grant",
+  sharedProjectContentState: "sharedProjects.contentState",
+  sharedProjectContentCommand: "sharedProjects.contentCommand",
+  sharedProjectContentConflict: "sharedProjects.contentConflict",
   computerUseState: "computerUse.state",
   computerUseCommand: "computerUse.command",
   memoryState: "memory.state",
@@ -871,10 +919,108 @@ const WsSetupProfilesStateRpc = Rpc.make(WS_METHODS.setupProfilesState, {
   success: SetupProfileState,
   error: Schema.Union([SetupProfileError, EnvironmentAuthorizationError]),
 });
+const WsContainersSubscribeRpc = Rpc.make(WS_METHODS.containersSubscribe, {
+  payload: Schema.Struct({}),
+  success: ContainerSnapshot,
+  stream: true,
+  error: EnvironmentAuthorizationError,
+});
+const WsContainersSnapshotRpc = Rpc.make(WS_METHODS.containersSnapshot, {
+  payload: Schema.Struct({}),
+  success: ContainerSnapshot,
+  error: EnvironmentAuthorizationError,
+});
+const WsContainersLogsRpc = Rpc.make(WS_METHODS.containersLogs, {
+  payload: ContainerLogsInput,
+  success: ContainerLogsResult,
+  error: Schema.Union([ContainerError, EnvironmentAuthorizationError]),
+});
+const WsContainersAssociateRpc = Rpc.make(WS_METHODS.containersAssociate, {
+  payload: ContainerAssociationCommand,
+  success: Schema.Void,
+  error: Schema.Union([ContainerError, EnvironmentAuthorizationError]),
+});
+const WsContainersManagedListRpc = Rpc.make(WS_METHODS.containersManagedList, {
+  payload: Schema.Struct({ threadId: Schema.optionalKey(ThreadId) }),
+  success: ManagedContainerInventory,
+  error: Schema.Union([ContainerError, EnvironmentAuthorizationError]),
+});
+const WsContainersManagedCreateRpc = Rpc.make(WS_METHODS.containersManagedCreate, {
+  payload: ManagedContainerCreate,
+  success: ManagedContainer,
+  error: Schema.Union([ContainerError, EnvironmentAuthorizationError]),
+});
+const WsContainersManagedCommandRpc = Rpc.make(WS_METHODS.containersManagedCommand, {
+  payload: ManagedContainerCommand,
+  success: ManagedContainer,
+  error: Schema.Union([ContainerError, EnvironmentAuthorizationError]),
+});
 const WsComputerUseStateRpc = Rpc.make(WS_METHODS.computerUseState, {
   payload: Schema.Struct({}),
   success: ComputerUseState,
   error: Schema.Union([ComputerUseError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectEnrollmentStateRpc = Rpc.make(WS_METHODS.sharedProjectEnrollmentState, {
+  payload: Schema.Struct({}),
+  success: SharedProjectEnrollmentState,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectContentStateRpc = Rpc.make(WS_METHODS.sharedProjectContentState, {
+  payload: SharedProjectContentStateInput,
+  success: SharedProjectContentState,
+  error: Schema.Union([
+    SharedProjectContentError,
+    SharedProjectError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+const WsSharedProjectContentCommandRpc = Rpc.make(WS_METHODS.sharedProjectContentCommand, {
+  payload: SharedProjectContentCommand,
+  success: Schema.Void,
+  error: Schema.Union([
+    SharedProjectContentError,
+    SharedProjectError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+const WsSharedProjectContentConflictRpc = Rpc.make(WS_METHODS.sharedProjectContentConflict, {
+  payload: SharedProjectContentConflictInput,
+  success: SharedProjectContentConflictPage,
+  error: Schema.Union([
+    SharedProjectContentError,
+    SharedProjectError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+const WsSharedProjectEnrollmentCommandRpc = Rpc.make(WS_METHODS.sharedProjectEnrollmentCommand, {
+  payload: SharedProjectEnrollmentCommand,
+  success: Schema.Void,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectGrantRpc = Rpc.make(WS_METHODS.sharedProjectGrant, {
+  payload: SharedProjectGrantInput,
+  success: SharedProjectGrantResult,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectsStateRpc = Rpc.make(WS_METHODS.sharedProjectsState, {
+  payload: Schema.Struct({}),
+  success: SharedProjectState,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectsPublishRpc = Rpc.make(WS_METHODS.sharedProjectsPublish, {
+  payload: SharedProjectPublish,
+  success: SharedProjectManifest,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectsBindRpc = Rpc.make(WS_METHODS.sharedProjectsBind, {
+  payload: SharedProjectBind,
+  success: SharedProjectBinding,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
+});
+const WsSharedProjectsUnbindRpc = Rpc.make(WS_METHODS.sharedProjectsUnbind, {
+  payload: Schema.Struct({ sharedProjectId: Schema.String, expectedBindingRevision: PositiveInt }),
+  success: Schema.Void,
+  error: Schema.Union([SharedProjectError, EnvironmentAuthorizationError]),
 });
 const WsComputerUseCommandRpc = Rpc.make(WS_METHODS.computerUseCommand, {
   payload: ComputerUseCommand,
@@ -2214,6 +2360,23 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpdateSettingsRpc,
   WsSetupProfilesSubscribeRpc,
   WsSetupProfilesStateRpc,
+  WsContainersSubscribeRpc,
+  WsContainersSnapshotRpc,
+  WsContainersLogsRpc,
+  WsContainersAssociateRpc,
+  WsContainersManagedListRpc,
+  WsContainersManagedCreateRpc,
+  WsContainersManagedCommandRpc,
+  WsSharedProjectsStateRpc,
+  WsSharedProjectEnrollmentStateRpc,
+  WsSharedProjectContentStateRpc,
+  WsSharedProjectContentCommandRpc,
+  WsSharedProjectContentConflictRpc,
+  WsSharedProjectEnrollmentCommandRpc,
+  WsSharedProjectGrantRpc,
+  WsSharedProjectsPublishRpc,
+  WsSharedProjectsBindRpc,
+  WsSharedProjectsUnbindRpc,
   WsComputerUseStateRpc,
   WsComputerUseCommandRpc,
   WsMemoryStateRpc,

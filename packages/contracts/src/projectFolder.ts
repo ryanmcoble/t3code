@@ -16,7 +16,17 @@ export type ProjectFolderEntry = typeof ProjectFolderEntry.Type;
 
 export const ProjectFolderEntries = Schema.Array(ProjectFolderEntry);
 export const ProjectFolderSessionInput = Schema.Struct({ transferId: TrimmedNonEmptyString });
-export const ProjectFolderExportInput = Schema.Struct({ cwd: TrimmedNonEmptyString });
+export const ProjectFolderContentPolicy = Schema.Struct({
+  mode: Schema.Literal("project-content"),
+  excludePaths: Schema.Array(Schema.String.check(Schema.isMaxLength(4096))).check(
+    Schema.isMaxLength(128),
+  ),
+});
+export type ProjectFolderContentPolicy = typeof ProjectFolderContentPolicy.Type;
+export const ProjectFolderExportInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  contentPolicy: Schema.optionalKey(ProjectFolderContentPolicy),
+});
 export const ProjectFolderExportResult = Schema.Struct({
   transferId: TrimmedNonEmptyString,
   entries: ProjectFolderEntries,
@@ -26,6 +36,7 @@ export const ProjectFolderImportInput = Schema.Struct({
   entries: ProjectFolderEntries,
   previousEntries: Schema.optional(ProjectFolderEntries),
   incremental: Schema.optional(Schema.Boolean),
+  contentPolicy: Schema.optionalKey(ProjectFolderContentPolicy),
 });
 export const ProjectFolderImportResult = Schema.Struct({
   ...ProjectFolderSessionInput.fields,
@@ -58,12 +69,18 @@ export class ProjectFolderTransferError extends Schema.TaggedError<ProjectFolder
       "invalid_chunk",
       "incomplete",
       "io",
+      "observation_limit",
+      "busy",
     ]),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     switch (this.reason) {
+      case "busy":
+        return "Folder updates are waiting for active work to finish and workspace activity to be verified. Retry when the folder is idle.";
+      case "observation_limit":
+        return "Too many folders are being watched. Pause unused shared projects and retry.";
       case "invalid_path":
         return "A folder entry points outside the copied folder or has an unsupported name.";
       case "unsupported_entry":

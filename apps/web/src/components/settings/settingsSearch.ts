@@ -1153,6 +1153,29 @@ export const SETTINGS_SEARCH_ITEMS = [
     cloudOnly: true,
   },
   {
+    id: "setup-mcp-skills",
+    title: "Shared MCP connections and skills",
+    to: "/settings/connections",
+    targetId: "setup-mcp-skills",
+    searchTerms: ["setup profile sync tools harness credentials conflicts shared mcp skills"],
+  },
+  {
+    id: "shared-memory",
+    title: "Shared and project memory",
+    to: "/settings/connections",
+    targetId: "shared-memory",
+    searchTerms: ["memory categories scopes learning recall knowledge"],
+  },
+  {
+    id: "computer-use",
+    title: "Computer use setup",
+    to: "/settings/connections",
+    targetId: "computer-use",
+    searchTerms: [
+      "desktop control cua driver accessibility screen recording permissions computer use",
+    ],
+  },
+  {
     id: "connections-environment",
     title: "This machine",
     to: "/settings/access",

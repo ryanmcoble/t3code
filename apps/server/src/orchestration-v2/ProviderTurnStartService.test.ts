@@ -1157,6 +1157,32 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+effectIt.effect(
+  "waits for a local project mutation before starting a provider without a worktree",
+  () =>
+    Effect.gen(function* () {
+      const workspaceRoot = "/tmp/provider-local-project-lease";
+      const release = yield* Deferred.make<void>();
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        workspaceRoot,
+        failReadsAfterRunning: true,
+      });
+      const holder = yield* withWorkspaceLease(workspaceRoot, Deferred.await(release)).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Effect.gen(function* () {
+        const startup = yield* harness.start.pipe(Effect.forkChild({ startImmediately: true }));
+        expect(harness.getTurnStartContext).not.toHaveBeenCalled();
+        expect(harness.open).not.toHaveBeenCalled();
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(holder);
+        yield* Fiber.join(startup);
+        expect(harness.open).toHaveBeenCalledOnce();
+      }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 effectIt.effect("reads current startup state after waiting for the workspace lease", () =>
   Effect.gen(function* () {
     const worktreePath = "/tmp/provider-start-fresh-state";

@@ -51,7 +51,7 @@ import { readEnvironmentScope } from "./session";
 
 const EMPTY_PENDING_REQUESTS: PendingThreadRequests = { approvals: [], userInputs: [] };
 
-const userInputDraftsByRequestKeyAtom = Atom.make<
+export const userInputDraftsByRequestKeyAtom = Atom.make<
   Record<string, Record<string, PendingUserInputDraftAnswer>>
 >({}).pipe(Atom.keepAlive, Atom.withLabel("mobile:user-input-drafts"));
 

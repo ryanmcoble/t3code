@@ -48,6 +48,91 @@ const withComputer = <A, E, R>(
     ),
   );
 
+it.effect("checks prerequisites while disabled without granting desktop access or prompting", () =>
+  withComputer(
+    Effect.gen(function* () {
+      const computer = yield* ComputerUse.ComputerUse;
+      const state = yield* computer.state;
+      assert.equal(state.readiness, "disabled");
+      assert.deepEqual(state.checks, {
+        driver: "available",
+        accessibility: true,
+        screenRecording: false,
+        harnessesSelected: false,
+        appsSelected: false,
+      });
+      assert.equal((yield* computer.apps(actor).pipe(Effect.result))._tag, "Failure");
+      assert.isFalse(state.config.enabled);
+    }),
+    {
+      call: (_command, tool, input) => {
+        if (tool === "list_apps") return Effect.succeed(apps);
+        assert.equal(tool, "check_permissions");
+        assert.deepEqual(input, { prompt: false, probe_direct_capture: false });
+        return Effect.succeed({
+          content: [{ type: "text", text: '{"accessibility":true,"screen_recording":false}' }],
+        });
+      },
+    },
+  ),
+);
+
+it.effect("rejects enabling computer use without an allowed harness", () =>
+  withComputer(
+    Effect.gen(function* () {
+      const computer = yield* ComputerUse.ComputerUse;
+      const result = yield* computer
+        .command({ operation: "configure", config: { ...config, providerInstanceIds: [] } })
+        .pipe(Effect.result);
+      assert.equal(result._tag, "Failure");
+    }),
+    { call: () => Effect.succeed(done) },
+  ),
+);
+
+it.effect("launches only allowed apps and keeps wildcard access explicit", () =>
+  Effect.gen(function* () {
+    const launched = yield* Ref.make<ReadonlyArray<string>>([]);
+    yield* withComputer(
+      Effect.gen(function* () {
+        const computer = yield* ComputerUse.ComputerUse;
+        yield* computer.command({ operation: "configure", config });
+        assert.equal(
+          (yield* computer.launch(actor, "com.other.editor").pipe(Effect.result))._tag,
+          "Failure",
+        );
+        yield* computer.launch(actor, "com.acme.calculator");
+        yield* computer.command({
+          operation: "configure",
+          config: { ...config, allowedApps: ["com.acme.*"] },
+        });
+        assert.equal(
+          (yield* computer.launch(actor, "com.acme.editor").pipe(Effect.result))._tag,
+          "Failure",
+        );
+        yield* computer.command({
+          operation: "configure",
+          config: { ...config, allowedApps: ["com.acme.*"], appRulesVersion: 1 },
+        });
+        yield* computer.launch(actor, "com.acme.editor");
+        assert.equal(
+          (yield* computer.launch(actor, "com.acmex.editor").pipe(Effect.result))._tag,
+          "Failure",
+        );
+        assert.deepEqual(yield* Ref.get(launched), ["com.acme.calculator", "com.acme.editor"]);
+      }),
+      {
+        call: (_command, tool, input) => {
+          assert.equal(tool, "launch_app");
+          return Ref.update(launched, (values) => [...values, String(input.bundle_id)]).pipe(
+            Effect.as(done),
+          );
+        },
+      },
+    );
+  }),
+);
+
 it.effect(
   "allows one desktop owner, binds PID to an allowed app, and rejects another caller's lease",
   () =>
@@ -79,9 +164,19 @@ it.effect(
             "Failure",
           );
           yield* computer.act(actor, lease.id, { kind: "key", key: "return" });
+          yield* computer.act(actor, lease.id, { kind: "key", key: "*" });
           assert.equal(
             (yield* Ref.get(calls)).filter((request) => request.tool === "press_key").length,
-            1,
+            2,
+          );
+          assert.deepEqual(
+            (yield* Ref.get(calls)).filter((request) => request.tool === "press_key")[1]?.input,
+            {
+              target: { kind: "window", pid: 42, window_id: 100 },
+              session: lease.id,
+              key: "8",
+              modifiers: ["shift"],
+            },
           );
           assert.deepEqual(
             (yield* Ref.get(calls)).find((request) => request.tool === "press_key")?.input.target,

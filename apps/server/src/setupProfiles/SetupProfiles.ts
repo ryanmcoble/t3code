@@ -42,6 +42,7 @@ import * as SetupPackages from "./SetupPackages.ts";
 import * as SetupFiles from "./SetupFiles.ts";
 import * as SetupRuntime from "./SetupRuntime.ts";
 import { MAX_SETUP_PACKAGE_BYTES, validateSetupProfile, validSetupName } from "./validation.ts";
+import { makeSetupHooks } from "./SetupHooks.ts";
 
 export class SetupProfiles extends Context.Service<
   SetupProfiles,
@@ -107,6 +108,7 @@ const make = Effect.gen(function* () {
   const environmentId = yield* environment.getEnvironmentId;
   const http = yield* HttpClient.HttpClient;
   const importSetup = yield* makeSetupImporter;
+  const hooks = yield* makeSetupHooks;
   const processEnvironment = yield* HostProcess.Environment;
   const sql = yield* SqlClient.SqlClient;
   const lock = yield* Semaphore.make(1);
@@ -116,7 +118,10 @@ const make = Effect.gen(function* () {
     return { profiles, binding: yield* store.binding };
   });
   const checked = Effect.fn("SetupProfiles.validate")(
-    (profile: Pick<SetupProfile, "connections" | "skills">) =>
+    (
+      profile: Pick<SetupProfile, "connections" | "skills" | "hooks"> &
+        Partial<Pick<SetupProfile, "schemaVersion">>,
+    ) =>
       Effect.try({
         try: () => validateSetupProfile(profile),
         catch: () => new SetupProfileError({ reason: "invalid" }),
@@ -154,7 +159,10 @@ const make = Effect.gen(function* () {
     );
     if (descriptor.environmentId !== binding.profile.ownerEnvironmentId)
       return yield* new SetupProfileError({ reason: "denied" });
-    if (descriptor.capabilities.setupProfiles !== 1)
+    if (
+      descriptor.capabilities.setupProfiles !== 1 ||
+      (binding.profile.schemaVersion === 2 && descriptor.capabilities.setupHooks !== 1)
+    )
       return yield* new SetupProfileError({ reason: "unsupported" });
     const token = overrideToken ?? (yield* getToken(binding.profile.id));
     return yield* http
@@ -277,6 +285,10 @@ const make = Effect.gen(function* () {
     const items: SetupItemStatus[] = [];
     const wanted: SetupFiles.SetupFile[] = [];
     const connections = new Map<ProviderInstanceId, ReadonlyArray<ResolvedSetupConnection>>();
+    const hookChecks: Array<{
+      instanceId: ProviderInstanceId;
+      prepared: Effect.Success<ReturnType<typeof hooks.prepare>>;
+    }> = [];
     for (const instanceId of binding.instanceIds) {
       const instance = deriveProviderInstanceConfigMap(currentSettings)[instanceId];
       if (!instance) {
@@ -290,6 +302,34 @@ const make = Effect.gen(function* () {
         continue;
       }
       const native = nativeSetupLayout(instance, home, path, processEnvironment);
+      for (const hook of binding.profile.hooks ?? []) {
+        if (!hook.enabled || (hook.drivers.length && !hook.drivers.includes(instance.driver)))
+          continue;
+        const prepared = yield* hooks.prepare(native).pipe(Effect.result);
+        if (prepared._tag === "Failure") {
+          items.push({
+            instanceId,
+            name: "SingleComm work tracking",
+            kind: "hook",
+            status:
+              prepared.failure.reason === "not-found" ? "missing-prerequisite" : "unsupported",
+            message:
+              prepared.failure.reason === "not-found"
+                ? "Install the SingleComm CLI on this environment, then retry setup."
+                : "This harness configuration or installed SingleComm CLI does not support managed work hooks.",
+          });
+        } else {
+          wanted.push(...prepared.success.files);
+          hookChecks.push({ instanceId, prepared: prepared.success });
+          items.push({
+            instanceId,
+            name: "SingleComm work tracking",
+            kind: "hook",
+            status: "configured",
+            message: "Native hooks and work skill prepared; lifecycle verification is pending.",
+          });
+        }
+      }
       const ready: ResolvedSetupConnection[] = [];
       for (const c of binding.profile.connections) {
         if (!c.enabled || (c.drivers.length && !c.drivers.includes(instance.driver))) continue;
@@ -337,6 +377,7 @@ const make = Effect.gen(function* () {
       }
       connections.set(instanceId, ready);
       for (const skill of binding.profile.skills) {
+        if (skill.enabled === false) continue;
         if (skill.drivers.length && !skill.drivers.includes(instance.driver)) continue;
         items.push({
           name: skill.name,
@@ -357,12 +398,21 @@ const make = Effect.gen(function* () {
           });
       }
     }
+    const uniquePaths = new Map<string, SetupFiles.SetupFile>();
+    for (const file of wanted) {
+      const existing = uniquePaths.get(file.path);
+      if (existing && (existing.digest !== file.digest || existing.format !== file.format))
+        return yield* new SetupProfileError({ reason: "invalid" });
+      uniquePaths.set(file.path, file);
+    }
     const key = yield* encodeJson([
       binding.profile,
       binding.instanceIds,
       Array.from(connections),
+      wanted,
+      hookChecks.map((check) => check.prepared.key),
     ]).pipe(Effect.mapError(storageError));
-    return { items, wanted, connections, key };
+    return { items, wanted, connections, key, hookChecks };
   });
   const activate = Effect.fn("SetupProfiles.activate")(
     function* (
@@ -370,11 +420,36 @@ const make = Effect.gen(function* () {
       reload: (ids: ReadonlyArray<ProviderInstanceId>) => Effect.Effect<void, SetupProfileError>,
       refreshed: (ids: ReadonlyArray<ProviderInstanceId>) => Effect.Effect<void>,
     ) {
-      const { items, wanted, connections, key } = yield* plan(binding);
-      if (key === appliedKey) {
-        const conflicts = binding.detached ? [] : yield* files.inspect(binding.profile.id);
+      const { items, wanted, connections, key, hookChecks } = yield* plan(binding);
+      if (items.some((item) => item.kind === "hook" && item.status !== "configured")) {
+        appliedKey = "";
         yield* store.saveBinding({
           ...binding,
+          items,
+          error: "Work hook prerequisites need attention. The last applied setup is retained.",
+        });
+        return;
+      }
+      if (key === appliedKey) {
+        const conflicts = binding.detached ? [] : yield* files.inspect(binding.profile.id);
+        if (conflicts.length) appliedKey = "";
+        yield* store.saveBinding({
+          ...binding,
+          items: binding.items.map((item) =>
+            item.kind === "hook" &&
+            hookChecks.some(
+              (check) =>
+                check.instanceId === item.instanceId &&
+                check.prepared.files.some((file) => conflicts.includes(file.path)),
+            )
+              ? {
+                  ...item,
+                  status: "conflict" as const,
+                  message:
+                    "Review the local hook or work skill changes before this setup can activate.",
+                }
+              : item,
+          ),
           conflicts: conflicts.slice(0, 100),
           error: conflicts.length
             ? "Local file conflicts require a resolution before this setup can activate."
@@ -406,8 +481,26 @@ const make = Effect.gen(function* () {
         });
         return;
       }
-      const conflicts = binding.detached ? [] : yield* files.apply(binding.profile.id, wanted);
+      const conflicts = binding.detached
+        ? []
+        : [
+            ...new Set([
+              ...(yield* files.apply(binding.profile.id, wanted)),
+              ...(yield* files.inspect(binding.profile.id)),
+            ]),
+          ];
       if (conflicts.length) {
+        for (const check of hookChecks) {
+          if (!check.prepared.files.some((file) => conflicts.includes(file.path))) continue;
+          const index = items.findIndex(
+            (item) => item.kind === "hook" && item.instanceId === check.instanceId,
+          );
+          items[index] = {
+            ...items[index]!,
+            status: "conflict",
+            message: "Review the local hook or work skill changes before this setup can activate.",
+          };
+        }
         yield* store.saveBinding({
           ...binding,
           items,
@@ -415,6 +508,35 @@ const make = Effect.gen(function* () {
           error: "Local file conflicts require a resolution before this setup can activate.",
         });
         return;
+      }
+      const paths = yield* store.paths;
+      for (const check of hookChecks) {
+        const index = items.findIndex(
+          (item) => item.kind === "hook" && item.instanceId === check.instanceId,
+        );
+        const item = items[index]!;
+        if (
+          check.prepared.files.some((file) =>
+            paths.some((entry) => entry.path === file.path && entry.overridden),
+          )
+        ) {
+          items[index] = {
+            ...item,
+            status: "overridden",
+            message:
+              "Local hook or work skill override retained; managed lifecycle verification is unavailable.",
+          };
+          continue;
+        }
+        const result = yield* hooks.verify(check.prepared).pipe(Effect.result);
+        items[index] = {
+          ...item,
+          status: result._tag === "Success" ? "verified" : "failed",
+          message:
+            result._tag === "Success"
+              ? "Installed hooks passed an isolated lifecycle check. Native session loading and trust remain harness-local."
+              : "Hooks are installed but the isolated lifecycle check failed. Check the local SingleComm CLI and retry.",
+        };
       }
       yield* runtime.replace(connections);
       yield* refreshed(binding.instanceIds);
@@ -432,7 +554,9 @@ const make = Effect.gen(function* () {
         observedRevision: binding.profile.revision,
         error: null,
       });
-      appliedKey = key;
+      appliedKey = items.some((item) => item.kind === "hook" && item.status === "failed")
+        ? ""
+        : key;
     },
     (effect) => runtime.stable(effect),
   );
@@ -571,7 +695,11 @@ const make = Effect.gen(function* () {
     function* (input: SetupProfileCommand) {
       switch (input.operation) {
         case "publish": {
-          yield* checked(input.profile);
+          yield* checked({
+            connections: input.profile.connections,
+            skills: input.profile.skills,
+            ...(input.profile.hooks ? { hooks: input.profile.hooks } : {}),
+          });
           const id = input.profile.id ?? (yield* crypto.randomUUIDv4().pipe(Effect.orDie));
           if (!validSetupName(id)) return yield* new SetupProfileError({ reason: "invalid" });
           if (
@@ -591,9 +719,10 @@ const make = Effect.gen(function* () {
               ownerEnvironmentId: environmentId,
               name: input.profile.name,
               revision: input.profile.expectedRevision + 1,
-              schemaVersion: 1,
+              schemaVersion: input.profile.hooks?.length ? 2 : 1,
               connections: input.profile.connections,
               skills: input.profile.skills,
+              ...(input.profile.hooks ? { hooks: input.profile.hooks } : {}),
               ...(input.profile.memoryScopes ? { memoryScopes: input.profile.memoryScopes } : {}),
               ...(input.profile.computerUse ? { computerUse: input.profile.computerUse } : {}),
             },
